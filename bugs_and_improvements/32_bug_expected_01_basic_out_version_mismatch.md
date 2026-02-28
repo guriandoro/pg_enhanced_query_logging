@@ -1,6 +1,6 @@
 # Bug: `expected/01_basic.out` hardcodes version 1.0 but control file defaults to 1.1
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Critical
 
