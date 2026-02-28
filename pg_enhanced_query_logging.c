@@ -703,6 +703,9 @@ peql_ExecutorEnd(QueryDesc *queryDesc)
 			peql_write_log_entry(queryDesc, msec);
 	}
 
+	/* Always reset so plan time doesn't leak to the next query. */
+	peql_current_plan_time_ms = 0.0;
+
 	/* Chain to previous hook or the standard cleanup. */
 	if (prev_ExecutorEnd)
 		prev_ExecutorEnd(queryDesc);
@@ -1417,9 +1420,6 @@ peql_write_log_entry(QueryDesc *queryDesc, double duration_ms)
 	peql_format_entry(&buf, queryDesc, duration_ms);
 	peql_flush_to_file(buf.data, buf.len);
 	pfree(buf.data);
-
-	/* Reset per-query planning time so it doesn't leak to the next query. */
-	peql_current_plan_time_ms = 0.0;
 }
 
 /*

@@ -1,6 +1,6 @@
 # Bug: Plan time leaks to next query when current query isn't logged
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: High
 
