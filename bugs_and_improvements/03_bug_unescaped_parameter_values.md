@@ -1,6 +1,6 @@
 # Bug: Unescaped parameter values can break log format
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: High
 

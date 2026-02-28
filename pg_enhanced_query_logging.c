@@ -1345,7 +1345,29 @@ peql_append_params(StringInfo buf, ParamListInfo params)
 
 			getTypeOutputInfo(prm->ptype, &typoutput, &typisvarlena);
 			val = OidOutputFunctionCall(typoutput, prm->value);
-			appendStringInfo(buf, "'%s'", val);
+			appendStringInfoChar(buf, '\'');
+			for (const char *p = val; *p; p++)
+			{
+				switch (*p)
+				{
+					case '\'':
+						appendStringInfoString(buf, "''");
+						break;
+					case '\n':
+						appendStringInfoString(buf, "\\n");
+						break;
+					case '\r':
+						appendStringInfoString(buf, "\\r");
+						break;
+					case '\\':
+						appendStringInfoString(buf, "\\\\");
+						break;
+					default:
+						appendStringInfoChar(buf, *p);
+						break;
+				}
+			}
+			appendStringInfoChar(buf, '\'');
 			pfree(val);
 		}
 	}
