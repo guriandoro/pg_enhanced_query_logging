@@ -18,7 +18,7 @@ cd /Users/agustin/src/guriandoro/pg_enhanced_query_logging
 make USE_PGXS=1 PG_CONFIG=/opt/postgresql/18.3/bin/pg_config
 
 # Install (requires write access to the PG installation directory)
-sudo make install USE_PGXS=1 PG_CONFIG=/opt/postgresql/18.3/bin/pg_config
+make install USE_PGXS=1 PG_CONFIG=/opt/postgresql/18.3/bin/pg_config
 ```
 
 This copies `pg_enhanced_query_logging.dylib` into `/opt/postgresql/18.3/lib/`
@@ -70,10 +70,10 @@ track_io_timing            = on         # PG-level I/O counter prerequisite
 pg_ctl -D $PGDATA -l $PGDATA/logfile start
 ```
 
-Verify the extension loaded by checking the server log:
+Verify the extension loaded by checking the shared_preload_libraries variable:
 
 ```bash
-grep -i "peql\|enhanced_query" $PGDATA/logfile
+psql -d postgres -c "SHOW shared_preload_libraries;"
 ```
 
 ## 5. Create the Extension
