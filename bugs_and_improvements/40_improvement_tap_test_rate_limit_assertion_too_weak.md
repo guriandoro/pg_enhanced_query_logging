@@ -1,6 +1,6 @@
 # Improvement: TAP test rate-limit assertion is too weak to catch regressions
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Low
 
