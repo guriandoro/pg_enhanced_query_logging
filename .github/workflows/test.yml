@@ -42,6 +42,7 @@ jobs:
         run: |
           brew install postgresql@${{ matrix.pg_version }}
           echo "$(brew --prefix postgresql@${{ matrix.pg_version }})/bin" >> $GITHUB_PATH
+          cpan -T IPC::Run
 
       - name: Build and install extension
         run: |

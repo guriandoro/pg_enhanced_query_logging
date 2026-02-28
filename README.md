@@ -398,21 +398,117 @@ SELECT pg_enhanced_query_logging_reset();
 
 ## Testing
 
-### Regression Tests
+The extension has three testing layers: SQL regression tests, Perl TAP tests, and a manual testing guide. All automated tests use standard PostgreSQL testing infrastructure and work on both macOS and Linux.
 
-SQL regression tests validate GUC behavior, extension loading, and the reset function:
+### Prerequisites
+
+Beyond the build requirements (C compiler, `pg_config`), the test suites need the PostgreSQL server development files and Perl modules that ship with them. The TAP tests additionally require `IPC::Run`, which is often not installed by default.
+
+**Ubuntu / Debian:**
 
 ```bash
-make installcheck USE_PGXS=1
+sudo apt-get install postgresql-server-dev-17 libipc-run-perl
 ```
+
+Replace `17` with your PostgreSQL major version (e.g., `18`). The `postgresql-server-dev-*` package provides `pg_regress`, the `PostgreSQL::Test::Cluster` and `PostgreSQL::Test::Utils` Perl modules, and the PGXS Makefile infrastructure. `libipc-run-perl` provides the `IPC::Run` module required by the TAP harness.
+
+**Fedora / RHEL / Rocky:**
+
+```bash
+sudo dnf install postgresql17-devel perl-IPC-Run
+```
+
+**macOS (Homebrew):**
+
+```bash
+brew install postgresql@17
+cpan IPC::Run        # if not already installed
+```
+
+Homebrew's `postgresql@*` formula includes the server dev files, `pg_regress`, and the Perl test modules. `IPC::Run` may need to be installed separately via `cpan` or `cpanm`.
+
+**Verifying prerequisites:**
+
+```bash
+# Check that pg_config is available
+pg_config --version
+
+# Check that IPC::Run is installed (required for TAP tests)
+perl -MIPC::Run -e 'print "ok\n"'
+
+# Check that PostgreSQL test modules are available
+perl -MPostgreSQL::Test::Cluster -e 'print "ok\n"'
+```
+
+If any of these fail, install the missing package as shown above. The SQL regression tests (`make installcheck`) only need `pg_regress` and do not require any Perl modules.
+
+### Quick Start
+
+Run the full automated test suite after building and installing:
+
+```bash
+# SQL regression tests (GUC defaults, extension load/unload)
+make installcheck USE_PGXS=1
+
+# TAP tests (log output, rate limiting, metrics, all features)
+make prove_installcheck USE_PGXS=1
+```
+
+Or specify `pg_config` explicitly:
+
+```bash
+make installcheck USE_PGXS=1 PG_CONFIG=/path/to/pg_config
+make prove_installcheck USE_PGXS=1 PG_CONFIG=/path/to/pg_config
+```
+
+### SQL Regression Tests
+
+Three tests in `sql/` validate core SQL behavior:
+
+| Test | What it covers |
+|------|----------------|
+| `01_basic` | Extension CREATE/DROP, version check, reset function |
+| `02_guc` | GUC defaults and validation for all `peql.*` settings |
+| `03_filtering` | Statement filtering behavior |
+
+Expected output files live in `expected/`. A failing test produces `regression.diffs` with the mismatch.
 
 ### TAP Tests
 
-Perl TAP tests verify log file creation, output format, rate limiting behavior, and metric accuracy:
+Ten Perl TAP tests in `t/` verify actual log output using `PostgreSQL::Test::Cluster` to spin up temporary server instances. A shared helper module (`t/PeqlNode.pm`) provides common setup and log-reading utilities.
+
+| Test | What it covers |
+|------|----------------|
+| `001_basic_logging` | Log file creation, pt-query-digest format, reset function, enable/disable |
+| `002_rate_limiting` | Per-query sampling, rate-limit metadata, always-log-duration override |
+| `003_extended_metrics` | Verbosity levels, buffer/WAL metrics, plan quality indicators, utility logging, row counts |
+| `004_nested_logging` | `peql.log_nested` on/off with PL/pgSQL inner statements |
+| `005_parameter_values` | Bind parameter logging, NULL handling, prepared statements |
+| `006_query_plan` | EXPLAIN plan output in text and JSON format |
+| `007_planning_time` | `peql.track_planning` on/off across verbosity levels |
+| `008_min_duration` | Duration threshold filtering with `pg_sleep` |
+| `009_session_rate_limit` | Session-mode rate limiting all-or-nothing behavior |
+| `010_edge_cases` | Disk sort, disk temp table, memory tracking, schema field changes |
+
+### Meson Build
+
+The extension includes a `meson.build` for compatibility with PostgreSQL's Meson build system (PG 16+). When building as part of the PostgreSQL source tree:
 
 ```bash
-make prove_installcheck USE_PGXS=1
+meson setup build
+cd build
+meson test --suite pg_enhanced_query_logging
 ```
+
+### CI/CD
+
+A GitHub Actions workflow (`.github/workflows/test.yml`) runs both test suites automatically on every push and pull request. The CI matrix covers:
+
+- **Platforms**: Ubuntu and macOS
+- **PostgreSQL versions**: 17 and 18
+- **Test suites**: pg_regress (SQL) and TAP (Perl)
+
+Test artifacts (diffs, logs) are uploaded on failure for debugging.
 
 ### Sample Configuration
 
@@ -422,7 +518,9 @@ A sample configuration file is included at `pg_enhanced_query_logging.conf`. You
 include = '/path/to/pg_enhanced_query_logging.conf'
 ```
 
-See `test/TESTING.md` for a detailed manual testing guide.
+### Manual Testing
+
+See `test/TESTING.md` for a comprehensive manual testing guide covering all features with step-by-step instructions and expected output. The manual guide complements the automated tests and is useful for exploratory testing and validating output with `pt-query-digest`.
 
 ## Compatibility Notes
 
@@ -442,10 +540,10 @@ Contributions are welcome. Here's how to get started:
 2. Make your changes, following the existing code style (PostgreSQL C conventions)
 3. Add or update tests as appropriate:
    - SQL regression tests in `sql/` with expected output in `expected/`
-   - TAP tests in `t/` for log output verification
+   - TAP tests in `t/` for log output verification (use `t/PeqlNode.pm` for common setup)
 4. Ensure the extension compiles cleanly: `make USE_PGXS=1`
-5. Run the test suite: `make installcheck USE_PGXS=1`
-6. Submit a pull request with a clear description of the change
+5. Run the full test suite: `make installcheck USE_PGXS=1 && make prove_installcheck USE_PGXS=1`
+6. Submit a pull request -- CI will run both test suites automatically on Ubuntu and macOS
 
 ### Code Style
 
