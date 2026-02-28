@@ -1406,7 +1406,13 @@ peql_append_params(StringInfo buf, ParamListInfo params)
 
 	for (i = 0; i < nparams; i++)
 	{
-		ParamExternData *prm = &params->params[i];
+		ParamExternData prmdata;
+		ParamExternData *prm;
+
+		if (params->paramFetch)
+			prm = params->paramFetch(params, i + 1, false, &prmdata);
+		else
+			prm = &params->params[i];
 
 		if (!first)
 			appendStringInfoString(buf, ", ");

@@ -1,6 +1,6 @@
 # Bug: Parameter access bypasses `paramFetch` hook, may read uninitialized data
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: High
 
