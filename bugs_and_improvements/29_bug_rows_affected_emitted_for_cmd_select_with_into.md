@@ -1,6 +1,6 @@
 # Bug: `Rows_affected` logic misclassifies SELECT INTO and CTAS queries
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Low
 

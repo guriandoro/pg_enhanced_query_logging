@@ -45,6 +45,7 @@
 #include "pgtime.h"
 #include "postmaster/syslogger.h"
 #include "storage/fd.h"
+#include "tcop/dest.h"
 #include "tcop/utility.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
@@ -1067,38 +1068,59 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 	 * from the tree walk, Rows_examined comes from actual scan-node
 	 * ntuples counts rather than being a copy of Rows_sent.
 	 */
-	if (queryDesc->operation == CMD_SELECT)
 	{
-		double examined = have_plan_metrics
-			? plan_metrics.rows_examined
-			: (double) rows_processed;
+		/*
+		 * Determine whether rows are sent to the client. SELECT INTO and
+		 * CTAS have CMD_SELECT but route to DestIntoRel / DestTransientRel;
+		 * DML with RETURNING does send rows despite being CMD_INSERT etc.
+		 */
+		bool is_returning = (queryDesc->operation != CMD_SELECT &&
+							 queryDesc->plannedstmt->hasReturning);
+		bool sends_rows = false;
 
-		appendStringInfo(buf,
-						 "# Query_time: %f  Lock_time: 0.000000"
-						 "  Rows_sent: " UINT64_FORMAT
-						 "  Rows_examined: %.0f\n",
-						 duration_sec,
-						 rows_processed,
-						 examined);
-	}
-	else
-	{
-		double examined = have_plan_metrics
-			? plan_metrics.rows_examined : 0.0;
+		if (queryDesc->operation == CMD_SELECT)
+		{
+			CommandDest dest = queryDesc->dest ? queryDesc->dest->mydest
+											   : DestNone;
+			sends_rows = (dest != DestIntoRel && dest != DestTransientRel);
+		}
+		else if (is_returning)
+		{
+			sends_rows = true;
+		}
 
-		appendStringInfo(buf,
-						 "# Query_time: %f  Lock_time: 0.000000"
-						 "  Rows_sent: 0  Rows_examined: %.0f\n",
-						 duration_sec,
-						 examined);
-	}
+		if (sends_rows)
+		{
+			double examined = have_plan_metrics
+				? plan_metrics.rows_examined
+				: (double) rows_processed;
 
-	/* Rows_affected for DML at standard+ verbosity. */
-	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_STANDARD &&
-		queryDesc->operation != CMD_SELECT)
-	{
-		appendStringInfo(buf, "# Rows_affected: " UINT64_FORMAT "\n",
-						 rows_processed);
+			appendStringInfo(buf,
+							 "# Query_time: %f  Lock_time: 0.000000"
+							 "  Rows_sent: " UINT64_FORMAT
+							 "  Rows_examined: %.0f\n",
+							 duration_sec,
+							 rows_processed,
+							 examined);
+		}
+		else
+		{
+			double examined = have_plan_metrics
+				? plan_metrics.rows_examined : 0.0;
+
+			appendStringInfo(buf,
+							 "# Query_time: %f  Lock_time: 0.000000"
+							 "  Rows_sent: 0  Rows_examined: %.0f\n",
+							 duration_sec,
+							 examined);
+		}
+
+		/* Rows_affected for non-SELECT or SELECT INTO/CTAS. */
+		if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_STANDARD && !sends_rows)
+		{
+			appendStringInfo(buf, "# Rows_affected: " UINT64_FORMAT "\n",
+							 rows_processed);
+		}
 	}
 
 	/*
