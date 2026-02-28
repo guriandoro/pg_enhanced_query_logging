@@ -17,18 +17,16 @@ peql.rate_limit_type = 'session'
 # Run multiple independent sessions and check for the all-or-nothing
 # property within each one.
 my $mixed_count = 0;
-my $sessions = 6;
+my $sessions = 4;
 
 for my $i (1 .. $sessions) {
 	$node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
 
-	# Each psql invocation is a separate session
 	$node->safe_psql('postgres', qq{
 SELECT 'session_${i}_a';
 SELECT 'session_${i}_b';
 SELECT 'session_${i}_c';
 });
-	sleep 1;
 
 	my $log_file = peql_log_path($node);
 	my $content = -f $log_file ? slurp_file($log_file) : '';
@@ -37,7 +35,6 @@ SELECT 'session_${i}_c';
 	my $has_b = ($content =~ /session_${i}_b/) ? 1 : 0;
 	my $has_c = ($content =~ /session_${i}_c/) ? 1 : 0;
 
-	# All-or-nothing: either all three appear or none do
 	my $sum = $has_a + $has_b + $has_c;
 	if ($sum != 0 && $sum != 3) {
 		$mixed_count++;

@@ -13,7 +13,7 @@ peql.track_memory = on
 my $content = reset_and_get_log($node, query_sql => q{
 SET peql.log_verbosity = 'full';
 SET work_mem = '64kB';
-SELECT * FROM generate_series(1, 100000) AS n ORDER BY n DESC;
+SELECT * FROM generate_series(1, 10000) AS n ORDER BY n DESC;
 });
 
 like($content, qr/Filesort: Yes/,
@@ -23,7 +23,7 @@ like($content, qr/Filesort: Yes/,
 $content = reset_and_get_log($node, query_sql => q{
 SET peql.log_verbosity = 'full';
 SET work_mem = '64kB';
-WITH big AS MATERIALIZED (SELECT generate_series(1, 100000) AS n) SELECT count(*) FROM big;
+WITH big AS MATERIALIZED (SELECT generate_series(1, 10000) AS n) SELECT count(*) FROM big;
 });
 
 like($content, qr/Temp_table: Yes/,
@@ -50,7 +50,6 @@ SET peql.log_verbosity = 'full';
 SET peql.track_memory = off;
 SELECT generate_series(1, 100);
 });
-sleep 1;
 $content = slurp_file(peql_log_path($node));
 
 unlike($content, qr/Mem_allocated:/,

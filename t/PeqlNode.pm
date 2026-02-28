@@ -34,8 +34,10 @@ sub peql_log_path {
 	return $node->data_dir . "/log/peql-slow.log";
 }
 
-# Reset the log, run a marker query so the new file is created,
-# wait for the logging collector to flush, then return the log path.
+# Reset the log, run queries, then return the log contents.
+# No sleep needed: the extension writes directly via open/write/close
+# (not through the logging collector), so data is on disk when
+# safe_psql returns.
 sub reset_and_get_log {
 	my ($node, %opts) = @_;
 	my $setup_sql = $opts{setup_sql} // '';
@@ -48,8 +50,6 @@ sub reset_and_get_log {
 	}
 
 	$node->safe_psql('postgres', $query_sql);
-
-	sleep 1;
 
 	my $log_file = peql_log_path($node);
 	return slurp_file($log_file);
