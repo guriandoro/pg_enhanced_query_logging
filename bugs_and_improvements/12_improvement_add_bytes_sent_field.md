@@ -1,6 +1,6 @@
 # Improvement: Add `Bytes_sent` field or remove from documentation
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Low
 

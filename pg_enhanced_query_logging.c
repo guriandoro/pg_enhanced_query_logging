@@ -968,8 +968,7 @@ peql_collect_plan_metrics(QueryDesc *queryDesc, PeqlPlanMetrics *metrics)
  *   SET timestamp=N;
  *   <query text>;
  *
- * Standard verbosity adds: Thread_id, Schema (db.schema), Rows_affected,
- *   Bytes_sent
+ * Standard verbosity adds: Thread_id, Schema (db.schema), Rows_affected
  *
  * Full verbosity adds: buffer/WAL/JIT metrics, plan quality booleans,
  *   planning time, memory usage
