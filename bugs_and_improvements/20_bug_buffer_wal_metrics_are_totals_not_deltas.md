@@ -1,6 +1,6 @@
 # Bug: Buffer and WAL metrics report cumulative totals, not per-query deltas
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: High
 
