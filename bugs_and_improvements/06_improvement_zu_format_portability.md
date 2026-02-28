@@ -1,6 +1,6 @@
 # Improvement: `%zu` format specifier portability for JIT and memory metrics
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Low
 

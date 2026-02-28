@@ -1218,12 +1218,12 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 			if (ji.created_functions > 0)
 			{
 				appendStringInfo(buf,
-								 "# JIT_functions: %zu"
+								 "# JIT_functions: " UINT64_FORMAT
 								 "  JIT_generation_time: %f"
 								 "  JIT_inlining_time: %f"
 								 "  JIT_optimization_time: %f"
 								 "  JIT_emission_time: %f\n",
-								 ji.created_functions,
+								 (uint64) ji.created_functions,
 								 INSTR_TIME_GET_MILLISEC(ji.generation_counter) / 1000.0,
 								 INSTR_TIME_GET_MILLISEC(ji.inlining_counter) / 1000.0,
 								 INSTR_TIME_GET_MILLISEC(ji.optimization_counter) / 1000.0,
@@ -1237,7 +1237,7 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 			Size mem = MemoryContextMemAllocated(
 						queryDesc->estate->es_query_cxt, true);
 
-			appendStringInfo(buf, "# Mem_allocated: %zu\n", mem);
+			appendStringInfo(buf, "# Mem_allocated: " UINT64_FORMAT "\n", (uint64) mem);
 		}
 	}
 
