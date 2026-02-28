@@ -27,17 +27,24 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "catalog/namespace.h"
 #include "executor/executor.h"
 #include "executor/instrument.h"
 #include "fmgr.h"
+#include "jit/jit.h"
 #include "lib/stringinfo.h"
 #include "libpq/libpq-be.h"
 #include "miscadmin.h"
+#include "nodes/nodeFuncs.h"
+#include "optimizer/planner.h"
 #include "pgtime.h"
 #include "postmaster/syslogger.h"
 #include "storage/fd.h"
 #include "utils/guc.h"
+#include "utils/lsyscache.h"
+#include "utils/memutils.h"
 #include "utils/timestamp.h"
+#include "utils/tuplesort.h"
 
 PG_MODULE_MAGIC_EXT(
 	.name = "pg_enhanced_query_logging",
@@ -87,6 +94,35 @@ static bool peql_log_utility = false;
 /* Whether to log nested statements (e.g. inside PL/pgSQL functions). */
 static bool peql_log_nested = false;
 
+/* Track block read/write times (requires PostgreSQL track_io_timing). */
+static bool peql_track_io_timing = true;
+
+/* Track WAL usage per query. */
+static bool peql_track_wal = true;
+
+/* Track memory context usage (experimental -- adds overhead). */
+static bool peql_track_memory = false;
+
+/* Track planning time separately from execution time. */
+static bool peql_track_planning = false;
+
+/* ---------- Per-query planning time (set by planner hook) ---------------- */
+static double peql_current_plan_time_ms = 0.0;
+
+/*
+ * Context passed through the plan-tree walker to collect plan quality
+ * indicators (Full_scan, Filesort, Temp_table) and accurate Rows_examined.
+ */
+typedef struct PeqlPlanMetrics
+{
+	bool	has_seqscan;
+	bool	has_sort;
+	bool	has_sort_on_disk;
+	bool	has_temp_table;
+	bool	has_temp_on_disk;
+	double	rows_examined;
+} PeqlPlanMetrics;
+
 /* ---------- Hook infrastructure ------------------------------------------ */
 
 /* Nesting depth -- incremented around ExecutorRun/Finish calls. */
@@ -102,12 +138,16 @@ static int nesting_level = 0;
 	 (nesting_level == 0 || peql_log_nested))
 
 /* Saved previous hook values so we can chain properly. */
+static planner_hook_type       prev_planner       = NULL;
 static ExecutorStart_hook_type  prev_ExecutorStart  = NULL;
 static ExecutorRun_hook_type    prev_ExecutorRun    = NULL;
 static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
 static ExecutorEnd_hook_type    prev_ExecutorEnd    = NULL;
 
 /* Forward declarations for hook functions. */
+static PlannedStmt *peql_planner(Query *parse, const char *query_string,
+								 int cursorOptions,
+								 ParamListInfo boundParams);
 static void peql_ExecutorStart(QueryDesc *queryDesc, int eflags);
 static void peql_ExecutorRun(QueryDesc *queryDesc,
 							 ScanDirection direction,
@@ -121,6 +161,11 @@ static void peql_resolve_log_path(char *result, size_t resultsize);
 static void peql_format_entry(StringInfo buf, QueryDesc *queryDesc,
 							  double duration_ms);
 static void peql_flush_to_file(const char *data, int len);
+
+/* Plan-tree analysis. */
+static bool peql_plan_walker(PlanState *planstate, void *context);
+static void peql_collect_plan_metrics(QueryDesc *queryDesc,
+									  PeqlPlanMetrics *metrics);
 
 /* SQL-callable reset function. */
 PG_FUNCTION_INFO_V1(pg_enhanced_query_logging_reset);
@@ -212,8 +257,55 @@ _PG_init(void)
 							 0,
 							 NULL, NULL, NULL);
 
+	/* ---- GUC: peql.track_io_timing ---- */
+	DefineCustomBoolVariable("peql.track_io_timing",
+							 "Include block read/write times in log output.",
+							 "Requires PostgreSQL's track_io_timing to be on "
+							 "for the underlying counters to be populated.",
+							 &peql_track_io_timing,
+							 true,
+							 PGC_SUSET,
+							 0,
+							 NULL, NULL, NULL);
+
+	/* ---- GUC: peql.track_wal ---- */
+	DefineCustomBoolVariable("peql.track_wal",
+							 "Include WAL usage metrics in log output.",
+							 NULL,
+							 &peql_track_wal,
+							 true,
+							 PGC_SUSET,
+							 0,
+							 NULL, NULL, NULL);
+
+	/* ---- GUC: peql.track_memory ---- */
+	DefineCustomBoolVariable("peql.track_memory",
+							 "Include memory context allocation in log output.",
+							 "Experimental. Adds some overhead to capture "
+							 "the memory allocated by the query.",
+							 &peql_track_memory,
+							 false,
+							 PGC_SUSET,
+							 0,
+							 NULL, NULL, NULL);
+
+	/* ---- GUC: peql.track_planning ---- */
+	DefineCustomBoolVariable("peql.track_planning",
+							 "Track and log planning time separately.",
+							 "Installs a planner hook to measure how long "
+							 "the query planner takes.",
+							 &peql_track_planning,
+							 false,
+							 PGC_SUSET,
+							 0,
+							 NULL, NULL, NULL);
+
 	/* Reserve the "peql" GUC prefix so no other extension can claim it. */
 	MarkGUCPrefixReserved("peql");
+
+	/* ---- Install planner hook ---- */
+	prev_planner       = planner_hook;
+	planner_hook       = peql_planner;
 
 	/* ---- Install executor hooks ---- */
 	prev_ExecutorStart  = ExecutorStart_hook;
@@ -227,6 +319,62 @@ _PG_init(void)
 
 	prev_ExecutorEnd    = ExecutorEnd_hook;
 	ExecutorEnd_hook    = peql_ExecutorEnd;
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
+ * Planner hook
+ *
+ * When peql.track_planning is enabled, wraps the standard planner to
+ * measure planning wall-clock time.  The result is stored in a static
+ * variable and consumed by ExecutorEnd when writing the log entry.
+ *
+ * The hook is always installed (to avoid needing a restart to toggle
+ * peql.track_planning), but it only takes the measurement when the
+ * GUC is on and the extension is active.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static PlannedStmt *
+peql_planner(Query *parse, const char *query_string,
+			 int cursorOptions, ParamListInfo boundParams)
+{
+	PlannedStmt *result;
+	instr_time	start;
+	instr_time	duration;
+
+	if (!peql_track_planning || !peql_enabled || peql_log_min_duration < 0)
+	{
+		if (prev_planner)
+			return prev_planner(parse, query_string, cursorOptions,
+								boundParams);
+		else
+			return standard_planner(parse, query_string, cursorOptions,
+									boundParams);
+	}
+
+	INSTR_TIME_SET_CURRENT(start);
+
+	nesting_level++;
+	PG_TRY();
+	{
+		if (prev_planner)
+			result = prev_planner(parse, query_string, cursorOptions,
+								  boundParams);
+		else
+			result = standard_planner(parse, query_string, cursorOptions,
+									  boundParams);
+	}
+	PG_FINALLY();
+	{
+		nesting_level--;
+	}
+	PG_END_TRY();
+
+	INSTR_TIME_SET_CURRENT(duration);
+	INSTR_TIME_SUBTRACT(duration, start);
+	peql_current_plan_time_ms = INSTR_TIME_GET_MILLISEC(duration);
+
+	return result;
 }
 
 /*
@@ -380,6 +528,73 @@ peql_resolve_log_path(char *result, size_t resultsize)
 
 /*
  * ──────────────────────────────────────────────────────────────────────────
+ * Plan-tree walker
+ *
+ * Walks the executed plan tree to extract plan quality indicators:
+ *   - Full_scan: any SeqScan node present
+ *   - Filesort / Filesort_on_disk: Sort nodes, and whether they spilled
+ *   - Temp_table / Temp_table_on_disk: Material nodes with disk spill
+ *   - Rows_examined: sum of ntuples across all scan nodes
+ *
+ * The walker uses planstate_tree_walker so it visits every node in the
+ * tree, including subplans and append children.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static bool
+peql_plan_walker(PlanState *planstate, void *context)
+{
+	PeqlPlanMetrics *m = (PeqlPlanMetrics *) context;
+
+	if (planstate == NULL)
+		return false;
+
+	/* Accumulate ntuples from instrumented scan nodes. */
+	if (planstate->instrument)
+		m->rows_examined += planstate->instrument->ntuples;
+
+	if (IsA(planstate, SeqScanState))
+		m->has_seqscan = true;
+
+	if (IsA(planstate, SortState))
+	{
+		SortState  *ss = (SortState *) planstate;
+
+		m->has_sort = true;
+
+		if (ss->sort_Done && ss->tuplesortstate != NULL)
+		{
+			TuplesortInstrumentation stats;
+
+			tuplesort_get_stats((Tuplesortstate *) ss->tuplesortstate, &stats);
+			if (stats.spaceType == SORT_SPACE_TYPE_DISK)
+				m->has_sort_on_disk = true;
+		}
+	}
+
+	if (IsA(planstate, MaterialState))
+	{
+		m->has_temp_table = true;
+		/* Temp_table_on_disk is inferred from temp_blks_written > 0. */
+	}
+
+	return planstate_tree_walker(planstate, peql_plan_walker, context);
+}
+
+/*
+ * Convenience wrapper that initialises the metrics struct and kicks off
+ * the walk.  Safe to call even when the planstate is NULL (returns zeros).
+ */
+static void
+peql_collect_plan_metrics(QueryDesc *queryDesc, PeqlPlanMetrics *metrics)
+{
+	memset(metrics, 0, sizeof(PeqlPlanMetrics));
+
+	if (queryDesc->planstate)
+		(void) peql_plan_walker(queryDesc->planstate, metrics);
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
  * Log entry formatter
  *
  * Builds a pt-query-digest-compatible slow log entry into the provided
@@ -393,8 +608,11 @@ peql_resolve_log_path(char *result, size_t resultsize)
  *   SET timestamp=N;
  *   <query text>;
  *
- * Standard verbosity adds: Thread_id, Schema, Rows_affected, Bytes_sent
- * Full verbosity adds all extended metrics (handled in Phase 3).
+ * Standard verbosity adds: Thread_id, Schema (db.schema), Rows_affected,
+ *   Bytes_sent
+ *
+ * Full verbosity adds: buffer/WAL/JIT metrics, plan quality booleans,
+ *   planning time, memory usage
  * ──────────────────────────────────────────────────────────────────────────
  */
 static void
@@ -413,6 +631,10 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 	double		duration_sec;
 	const char *query_text;
 
+	Instrumentation *instr;
+	PeqlPlanMetrics	plan_metrics;
+	bool			have_plan_metrics = false;
+
 	/* ---- Gather connection metadata ---- */
 	if (MyProcPort)
 	{
@@ -424,23 +646,26 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 	if (host == NULL) host = "";
 	if (db == NULL)   db   = "";
 
+	instr = queryDesc->totaltime;
 	rows_processed = queryDesc->estate->es_processed;
 	duration_sec   = duration_ms / 1000.0;
-
-	/* Use the original source text; fall back to an empty string. */
 	query_text = queryDesc->sourceText ? queryDesc->sourceText : "";
 
 	/*
-	 * ---- # Time: line ----
-	 *
-	 * ISO-8601 timestamp with microseconds, matching the format that
-	 * pt-query-digest recognises: YYYY-MM-DDTHH:MM:SS.uuuuuuZ
+	 * Collect plan-tree metrics when full verbosity is enabled.  We do
+	 * this before finalizing the format so the data is available.
 	 */
+	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_FULL && queryDesc->planstate)
+	{
+		peql_collect_plan_metrics(queryDesc, &plan_metrics);
+		have_plan_metrics = true;
+	}
+
+	/* ---- # Time: line ---- */
 	now = GetCurrentTimestamp();
 	stamp_time = timestamptz_to_time_t(now);
 	tm_info = pg_localtime(&stamp_time, log_timezone);
 
-	/* Extract microseconds from the TimestampTz (PG epoch microseconds). */
 	usec = (int)(now % 1000000);
 	if (usec < 0) usec += 1000000;
 
@@ -456,54 +681,68 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 
 	appendStringInfo(buf, "# Time: %s\n", timebuf);
 
-	/*
-	 * ---- # User@Host: line ----
-	 *
-	 * Format: user[user] @ host []
-	 * The bracketed repeat of user mirrors MySQL slow log convention.
-	 */
+	/* ---- # User@Host: line ---- */
 	appendStringInfo(buf, "# User@Host: %s[%s] @ %s []\n", user, user, host);
 
 	/*
-	 * ---- Standard verbosity: Thread_id, Schema ----
+	 * ---- Standard verbosity: Thread_id, Schema (db.schema) ----
 	 *
-	 * Thread_id maps to the PostgreSQL backend PID.
-	 * Schema is the database name (schema-level detail added in Phase 3).
+	 * Schema now uses "dbname.schemaname" format, with the current
+	 * schema obtained from the search path.
 	 */
 	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_STANDARD)
 	{
-		appendStringInfo(buf, "# Thread_id: %d  Schema: %s\n",
-						 MyProcPid, db);
+		const char *schema_name = NULL;
+		List	   *search_path;
+
+		search_path = fetch_search_path(false);
+		if (search_path != NIL)
+		{
+			Oid		first_ns = linitial_oid(search_path);
+
+			schema_name = get_namespace_name(first_ns);
+			list_free(search_path);
+		}
+
+		if (schema_name)
+			appendStringInfo(buf, "# Thread_id: %d  Schema: %s.%s\n",
+							 MyProcPid, db, schema_name);
+		else
+			appendStringInfo(buf, "# Thread_id: %d  Schema: %s\n",
+							 MyProcPid, db);
 	}
 
 	/*
 	 * ---- # Query_time / Lock_time / Rows_sent / Rows_examined ----
 	 *
-	 * This is the core line that pt-query-digest requires.
-	 *  - Query_time: total execution time in seconds (float)
-	 *  - Lock_time:  placeholder 0 for now (proper lock-wait time in Phase 3)
-	 *  - Rows_sent:  for SELECT, the number of rows returned to the client
-	 *  - Rows_examined: for now, same as Rows_sent (plan-tree walk in Phase 3)
-	 *
-	 * For DML (INSERT/UPDATE/DELETE), Rows_sent = 0 and Rows_examined = 0;
-	 * the affected count goes to Rows_affected on the standard line.
+	 * Core line required by pt-query-digest.  When we have plan metrics
+	 * from the tree walk, Rows_examined comes from actual scan-node
+	 * ntuples counts rather than being a copy of Rows_sent.
 	 */
 	if (queryDesc->operation == CMD_SELECT)
 	{
+		double examined = have_plan_metrics
+			? plan_metrics.rows_examined
+			: (double) rows_processed;
+
 		appendStringInfo(buf,
 						 "# Query_time: %f  Lock_time: 0.000000"
 						 "  Rows_sent: " UINT64_FORMAT
-						 "  Rows_examined: " UINT64_FORMAT "\n",
+						 "  Rows_examined: %.0f\n",
 						 duration_sec,
 						 rows_processed,
-						 rows_processed);
+						 examined);
 	}
 	else
 	{
+		double examined = have_plan_metrics
+			? plan_metrics.rows_examined : 0.0;
+
 		appendStringInfo(buf,
 						 "# Query_time: %f  Lock_time: 0.000000"
-						 "  Rows_sent: 0  Rows_examined: 0\n",
-						 duration_sec);
+						 "  Rows_sent: 0  Rows_examined: %.0f\n",
+						 duration_sec,
+						 examined);
 	}
 
 	/* Rows_affected for DML at standard+ verbosity. */
@@ -515,22 +754,127 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 	}
 
 	/*
-	 * ---- SET timestamp line ----
-	 *
-	 * Required by pt-query-digest to associate a UNIX timestamp with
-	 * each entry.  We use the current time (end-of-query).
+	 * ────────────────────────────────────────────────────────
+	 * Full verbosity: extended metrics
+	 * ────────────────────────────────────────────────────────
 	 */
+	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_FULL && instr)
+	{
+		BufferUsage *bu = &instr->bufusage;
+		WalUsage	*wu = &instr->walusage;
+
+		/* ---- Buffer usage ---- */
+		appendStringInfo(buf,
+						 "# Shared_blks_hit: " INT64_FORMAT
+						 "  Shared_blks_read: " INT64_FORMAT
+						 "  Shared_blks_dirtied: " INT64_FORMAT
+						 "  Shared_blks_written: " INT64_FORMAT "\n",
+						 bu->shared_blks_hit,
+						 bu->shared_blks_read,
+						 bu->shared_blks_dirtied,
+						 bu->shared_blks_written);
+
+		appendStringInfo(buf,
+						 "# Local_blks_hit: " INT64_FORMAT
+						 "  Local_blks_read: " INT64_FORMAT
+						 "  Local_blks_written: " INT64_FORMAT "\n",
+						 bu->local_blks_hit,
+						 bu->local_blks_read,
+						 bu->local_blks_written);
+
+		appendStringInfo(buf,
+						 "# Temp_blks_read: " INT64_FORMAT
+						 "  Temp_blks_written: " INT64_FORMAT "\n",
+						 bu->temp_blks_read,
+						 bu->temp_blks_written);
+
+		/* ---- I/O timing (block read/write times) ---- */
+		if (peql_track_io_timing)
+		{
+			appendStringInfo(buf,
+							 "# Shared_blk_read_time: %f"
+							 "  Shared_blk_write_time: %f\n",
+							 INSTR_TIME_GET_MILLISEC(bu->shared_blk_read_time) / 1000.0,
+							 INSTR_TIME_GET_MILLISEC(bu->shared_blk_write_time) / 1000.0);
+		}
+
+		/* ---- WAL usage ---- */
+		if (peql_track_wal)
+		{
+			appendStringInfo(buf,
+							 "# WAL_records: " INT64_FORMAT
+							 "  WAL_bytes: " UINT64_FORMAT
+							 "  WAL_fpi: " INT64_FORMAT "\n",
+							 wu->wal_records,
+							 wu->wal_bytes,
+							 wu->wal_fpi);
+		}
+
+		/* ---- Planning time ---- */
+		if (peql_track_planning && peql_current_plan_time_ms > 0)
+		{
+			appendStringInfo(buf, "# Plan_time: %f\n",
+							 peql_current_plan_time_ms / 1000.0);
+		}
+
+		/* ---- Plan quality indicators ---- */
+		if (have_plan_metrics)
+		{
+			appendStringInfo(buf,
+							 "# Full_scan: %s"
+							 "  Temp_table: %s"
+							 "  Temp_table_on_disk: %s"
+							 "  Filesort: %s"
+							 "  Filesort_on_disk: %s\n",
+							 plan_metrics.has_seqscan ? "Yes" : "No",
+							 plan_metrics.has_temp_table ? "Yes" : "No",
+							 (bu->temp_blks_written > 0) ? "Yes" : "No",
+							 plan_metrics.has_sort ? "Yes" : "No",
+							 plan_metrics.has_sort_on_disk ? "Yes" : "No");
+		}
+
+		/* ---- JIT metrics ---- */
+		if (queryDesc->estate->es_jit)
+		{
+			JitInstrumentation ji = {0};
+
+			InstrJitAgg(&ji, &queryDesc->estate->es_jit->instr);
+
+			if (queryDesc->estate->es_jit_worker_instr)
+				InstrJitAgg(&ji, queryDesc->estate->es_jit_worker_instr);
+
+			if (ji.created_functions > 0)
+			{
+				appendStringInfo(buf,
+								 "# JIT_functions: %zu"
+								 "  JIT_generation_time: %f"
+								 "  JIT_inlining_time: %f"
+								 "  JIT_optimization_time: %f"
+								 "  JIT_emission_time: %f\n",
+								 ji.created_functions,
+								 INSTR_TIME_GET_MILLISEC(ji.generation_counter) / 1000.0,
+								 INSTR_TIME_GET_MILLISEC(ji.inlining_counter) / 1000.0,
+								 INSTR_TIME_GET_MILLISEC(ji.optimization_counter) / 1000.0,
+								 INSTR_TIME_GET_MILLISEC(ji.emission_counter) / 1000.0);
+			}
+		}
+
+		/* ---- Memory context usage ---- */
+		if (peql_track_memory && queryDesc->estate->es_query_cxt)
+		{
+			Size mem = MemoryContextMemAllocated(
+						queryDesc->estate->es_query_cxt, true);
+
+			appendStringInfo(buf, "# Mem_allocated: %zu\n", mem);
+		}
+	}
+
+	/* ---- SET timestamp line ---- */
 	appendStringInfo(buf, "SET timestamp=%ld;\n", (long) stamp_time);
 
-	/*
-	 * ---- Query text ----
-	 *
-	 * Terminated by a semicolon and a newline, which is how pt-query-digest
-	 * delimits the end of one query entry.
-	 */
+	/* ---- Query text ---- */
 	appendStringInfoString(buf, query_text);
 
-	/* Ensure the query text ends with a semicolon. */
 	if (buf->len > 0 && buf->data[buf->len - 1] != ';')
 		appendStringInfoChar(buf, ';');
 	appendStringInfoChar(buf, '\n');
@@ -608,6 +952,9 @@ peql_write_log_entry(QueryDesc *queryDesc, double duration_ms)
 	peql_format_entry(&buf, queryDesc, duration_ms);
 	peql_flush_to_file(buf.data, buf.len);
 	pfree(buf.data);
+
+	/* Reset per-query planning time so it doesn't leak to the next query. */
+	peql_current_plan_time_ms = 0.0;
 }
 
 /*

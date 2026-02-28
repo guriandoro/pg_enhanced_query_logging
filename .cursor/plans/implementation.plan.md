@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: phase3-extended-metrics
     content: "Phase 3 - Extended metrics: Add BufferUsage delta tracking (shared/local/temp blocks), WalUsage delta tracking, planning time, JIT metrics, plan-tree walking for Full_scan/Filesort/Temp_table booleans, memory context tracking. Gate behind log_verbosity levels (minimal/standard/full). Add track_io_timing, track_wal, track_memory, track_planning GUCs."
-    status: pending
+    status: completed
   - id: phase4-rate-limiting
     content: "Phase 4 - Rate limiting and filtering: Implement session-based and query-based rate limiting with rate_limit, rate_limit_type, rate_limit_always_log_duration GUCs. Add log_utility (ProcessUtility_hook), log_nested, log_parameter_values, log_query_plan GUCs. Emit Log_slow_rate_type/Log_slow_rate_limit in output."
     status: pending
