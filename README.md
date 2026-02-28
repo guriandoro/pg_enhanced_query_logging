@@ -455,6 +455,24 @@ perl -MPostgreSQL::Test::Cluster -e 'print "ok\n"'
 
 If any of these fail, install the missing package as shown above. The SQL regression tests (`make installcheck`) only need `pg_regress` and do not require any Perl modules.
 
+### Disabling Default PostgreSQL Logging
+
+When testing this extension, you should disable PostgreSQL's built-in query logging so that only `pg_enhanced_query_logging` writes query entries. If both systems are active, PostgreSQL's default logging will duplicate query output into its own log files, making it harder to isolate and verify the extension's behavior.
+
+Add these settings to `postgresql.conf` (or pass them via `ALTER SYSTEM` / `-c` flags) on your test instance:
+
+```
+log_statement = 'none'
+log_min_duration_statement = -1
+log_duration = off
+```
+
+- `log_statement = 'none'` prevents PostgreSQL from logging query text to its own log.
+- `log_min_duration_statement = -1` disables PostgreSQL's built-in slow query logging (which is separate from `peql.log_min_duration`).
+- `log_duration = off` prevents PostgreSQL from logging execution duration for every statement.
+
+The automated TAP tests handle this automatically -- each test spins up a fresh `PostgreSQL::Test::Cluster` instance whose default configuration already has these settings off. If you are running manual tests against an existing server, verify these are disabled to avoid confusion between PostgreSQL's log output and the extension's `peql-slow.log`.
+
 ### Quick Start
 
 Run the full automated test suite after building and installing:
