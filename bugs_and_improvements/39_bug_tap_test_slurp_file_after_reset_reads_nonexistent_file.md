@@ -1,6 +1,6 @@
 # Bug: TAP test reads potentially nonexistent file after reset
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Low
 
