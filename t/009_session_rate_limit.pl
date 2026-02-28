@@ -22,6 +22,7 @@ my $sessions = 4;
 for my $i (1 .. $sessions) {
 	$node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
 
+	# Each psql invocation is a separate session
 	$node->safe_psql('postgres', qq{
 SELECT 'session_${i}_a';
 SELECT 'session_${i}_b';
@@ -29,7 +30,10 @@ SELECT 'session_${i}_c';
 });
 
 	my $log_file = peql_log_path($node);
-	my $content = -f $log_file ? slurp_file($log_file) : '';
+	my $content = '';
+	if (-f $log_file) {
+		eval { $content = slurp_file($log_file); };
+	}
 
 	my $has_a = ($content =~ /session_${i}_a/) ? 1 : 0;
 	my $has_b = ($content =~ /session_${i}_b/) ? 1 : 0;

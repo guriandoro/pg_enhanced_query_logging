@@ -39,20 +39,16 @@ like($content, qr/Mem_allocated: \d+/,
 	"track_memory=on: Mem_allocated field present");
 
 # ── Test 4: Mem_allocated absent when track_memory = off ──
-# Reset with track_memory=off in the same session so the reset entry
-# itself also omits Mem_allocated (avoids polluting the unlike check).
-$node->safe_psql('postgres', q{
-SET peql.track_memory = off;
-SELECT pg_enhanced_query_logging_reset();
-});
-$node->safe_psql('postgres', q{
+$content = reset_and_get_log($node, query_sql => q{
 SET peql.log_verbosity = 'full';
 SET peql.track_memory = off;
 SELECT generate_series(1, 100);
 });
-$content = slurp_file(peql_log_path($node));
 
-unlike($content, qr/Mem_allocated:/,
+# Filter out the reset entry (logged at server-default track_memory=on)
+my @non_reset = grep { !/pg_enhanced_query_logging_reset/ }
+	split(/(?=^# Time:)/m, $content);
+unlike(join('', @non_reset), qr/Mem_allocated:/,
 	"track_memory=off: Mem_allocated field absent");
 
 # ── Test 5: Schema field changes with search_path ──
@@ -79,6 +75,7 @@ $node->safe_psql('postgres', q{
 CREATE TABLE fullscan_test AS SELECT generate_series(1, 1000) AS id;
 ANALYZE fullscan_test;
 });
+_ignore_siginfo();
 
 $content = reset_and_get_log($node, query_sql => q{
 SET peql.log_verbosity = 'full';
@@ -89,5 +86,6 @@ like($content, qr/Full_scan: Yes/,
 	"sequential scan triggers Full_scan: Yes");
 
 $node->safe_psql('postgres', 'DROP TABLE fullscan_test');
+_ignore_siginfo();
 $node->stop;
 done_testing();

@@ -6,7 +6,16 @@ use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Exporter 'import';
 
-our @EXPORT = qw(setup_peql_node reset_and_get_log peql_log_path);
+our @EXPORT = qw(setup_peql_node reset_and_get_log peql_log_path _ignore_siginfo);
+
+# On macOS, pg_ctl sends SIGINFO (signal 29) to its process group when
+# starting/stopping PostgreSQL.  The default Perl action terminates the
+# process.  Install the handler and re-arm it after every IPC::Run call
+# since subprocesses may reset signal dispositions.
+sub _ignore_siginfo {
+	$SIG{INFO} = 'IGNORE' if exists $SIG{INFO};
+}
+_ignore_siginfo();
 
 sub setup_peql_node {
 	my (%opts) = @_;
@@ -44,12 +53,15 @@ sub reset_and_get_log {
 	my $query_sql = $opts{query_sql} // "SELECT 'peql_marker'";
 
 	$node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
+	_ignore_siginfo();
 
 	if ($setup_sql ne '') {
 		$node->safe_psql('postgres', $setup_sql);
+		_ignore_siginfo();
 	}
 
 	$node->safe_psql('postgres', $query_sql);
+	_ignore_siginfo();
 
 	my $log_file = peql_log_path($node);
 	return slurp_file($log_file);
