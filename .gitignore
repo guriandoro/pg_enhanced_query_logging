@@ -1,0 +1,17 @@
+# Build artifacts
+*.o
+*.so
+*.dll
+*.dylib
+
+# PGXS regression test output
+results/
+tmp_check/
+log/
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
