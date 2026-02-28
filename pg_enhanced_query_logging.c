@@ -1337,9 +1337,11 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
  * ──────────────────────────────────────────────────────────────────────────
  * File writer
  *
- * Appends pre-formatted data to the slow query log file.  Uses
- * AllocateFile/FreeFile so PostgreSQL tracks the file descriptor and
- * cleans up on transaction abort.
+ * Appends pre-formatted data to the slow query log file.  Uses raw
+ * fopen/fclose instead of AllocateFile/FreeFile because this runs from
+ * ExecutorEnd where the ResourceOwner may be in an unusual state (e.g.
+ * during transaction abort or backend exit).  Since we open, write, and
+ * close within a single call, resource tracking is unnecessary.
  *
  * Each call opens the file, writes, and closes.  This is safe for
  * concurrent backends because O_APPEND ensures atomic writes on POSIX
@@ -1357,7 +1359,7 @@ peql_flush_to_file(const char *data, int len)
 
 	peql_resolve_log_path(logpath, sizeof(logpath));
 
-	fp = AllocateFile(logpath, "a");
+	fp = fopen(logpath, "a");
 	if (fp == NULL)
 	{
 		/*
@@ -1373,7 +1375,7 @@ peql_flush_to_file(const char *data, int len)
 
 		(void) MakePGDirectory(dirpath);
 
-		fp = AllocateFile(logpath, "a");
+		fp = fopen(logpath, "a");
 		if (fp == NULL)
 		{
 			ereport(LOG,
@@ -1394,7 +1396,7 @@ peql_flush_to_file(const char *data, int len)
 							logpath, (uint64) written, len)));
 		}
 	}
-	FreeFile(fp);
+	fclose(fp);
 }
 
 /*

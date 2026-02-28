@@ -1,6 +1,6 @@
 # Bug: `AllocateFile` may fail outside of a valid resource owner context
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Medium
 
