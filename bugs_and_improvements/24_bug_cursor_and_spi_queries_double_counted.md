@@ -1,6 +1,6 @@
 # Bug: Cursor fetches and SPI queries can cause duplicate or misleading log entries
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Medium
 
