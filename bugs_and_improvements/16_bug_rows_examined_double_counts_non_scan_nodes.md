@@ -1,6 +1,6 @@
 # Bug: `rows_examined` double-counts tuples by summing all nodes, not just scan nodes
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Medium
 

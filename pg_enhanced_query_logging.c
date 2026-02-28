@@ -848,17 +848,32 @@ peql_plan_walker(PlanState *planstate, void *context)
 		return false;
 
 	/*
-	 * Accumulate rows from instrumented scan nodes.  We read tuplecount
-	 * (the running counter) + ntuples (already-finalised loops) because
+	 * Accumulate rows only from scan (leaf) nodes that read from storage,
+	 * matching MySQL's Rows_examined semantics.  We read tuplecount (the
+	 * running counter) + ntuples (already-finalised loops) because
 	 * InstrEndLoop has not been called on per-node instrumentation at the
 	 * point we walk the tree -- only queryDesc->totaltime gets finalised.
 	 */
-	if (planstate->instrument)
-		m->rows_examined += planstate->instrument->ntuples
-						  + planstate->instrument->tuplecount;
-
-	if (IsA(planstate, SeqScanState))
-		m->has_seqscan = true;
+	switch (nodeTag(planstate))
+	{
+		case T_SeqScanState:
+			m->has_seqscan = true;
+			/* FALLTHROUGH */
+		case T_IndexScanState:
+		case T_IndexOnlyScanState:
+		case T_BitmapHeapScanState:
+		case T_TidScanState:
+		case T_TidRangeScanState:
+		case T_ForeignScanState:
+		case T_CustomScanState:
+		case T_SampleScanState:
+			if (planstate->instrument)
+				m->rows_examined += planstate->instrument->ntuples
+								  + planstate->instrument->tuplecount;
+			break;
+		default:
+			break;
+	}
 
 	if (IsA(planstate, SortState))
 	{
