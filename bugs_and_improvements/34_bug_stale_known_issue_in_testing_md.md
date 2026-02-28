@@ -1,6 +1,6 @@
 # Bug: Stale "known issue" in TESTING.md contradicts fixed code
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Medium
 
