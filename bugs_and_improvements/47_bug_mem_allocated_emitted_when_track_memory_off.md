@@ -1,6 +1,6 @@
 # Bug: Mem_allocated emitted when peql.track_memory = off
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Medium
 

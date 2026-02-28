@@ -1,6 +1,6 @@
 # Bug: TAP test 003 fails because reset() is logged at server-level verbosity
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Low
 

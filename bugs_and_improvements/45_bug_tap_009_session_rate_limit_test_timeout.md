@@ -1,6 +1,6 @@
 # Bug: TAP test 009 session rate limit test exits with code 60 (timeout)
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Medium
 

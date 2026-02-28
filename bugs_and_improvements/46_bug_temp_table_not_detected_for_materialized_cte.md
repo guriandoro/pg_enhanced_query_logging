@@ -1,6 +1,6 @@
 # Bug: Temp_table not detected for MATERIALIZED CTEs
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Medium
 

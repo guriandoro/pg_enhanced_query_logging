@@ -1,6 +1,6 @@
 # Bug: TAP test 005 parameter values not logged for PREPARE/EXECUTE
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Medium
 
