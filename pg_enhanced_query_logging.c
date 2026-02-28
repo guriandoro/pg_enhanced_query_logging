@@ -521,6 +521,17 @@ _PG_init(void)
 	ProcessUtility_hook  = peql_ProcessUtility;
 }
 
+void
+_PG_fini(void)
+{
+	planner_hook        = prev_planner;
+	ExecutorStart_hook  = prev_ExecutorStart;
+	ExecutorRun_hook    = prev_ExecutorRun;
+	ExecutorFinish_hook = prev_ExecutorFinish;
+	ExecutorEnd_hook    = prev_ExecutorEnd;
+	ProcessUtility_hook = prev_ProcessUtility;
+}
+
 /*
  * ──────────────────────────────────────────────────────────────────────────
  * Planner hook

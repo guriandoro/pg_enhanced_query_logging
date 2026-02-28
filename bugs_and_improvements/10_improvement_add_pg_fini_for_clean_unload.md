@@ -1,6 +1,6 @@
 # Improvement: Add `_PG_fini()` for clean hook uninstallation
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Low
 
