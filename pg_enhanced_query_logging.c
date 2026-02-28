@@ -819,9 +819,15 @@ peql_plan_walker(PlanState *planstate, void *context)
 	if (planstate == NULL)
 		return false;
 
-	/* Accumulate ntuples from instrumented scan nodes. */
+	/*
+	 * Accumulate rows from instrumented scan nodes.  We read tuplecount
+	 * (the running counter) + ntuples (already-finalised loops) because
+	 * InstrEndLoop has not been called on per-node instrumentation at the
+	 * point we walk the tree -- only queryDesc->totaltime gets finalised.
+	 */
 	if (planstate->instrument)
-		m->rows_examined += planstate->instrument->ntuples;
+		m->rows_examined += planstate->instrument->ntuples
+						  + planstate->instrument->tuplecount;
 
 	if (IsA(planstate, SeqScanState))
 		m->has_seqscan = true;
