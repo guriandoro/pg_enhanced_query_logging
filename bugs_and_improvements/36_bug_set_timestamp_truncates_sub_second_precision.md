@@ -1,6 +1,6 @@
 # Bug: `SET timestamp` start-time computation truncates sub-second duration
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Medium
 
