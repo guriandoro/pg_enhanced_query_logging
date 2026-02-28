@@ -758,6 +758,11 @@ peql_ProcessUtility(PlannedStmt *pstmt,
 		instr_time	duration;
 		double		msec;
 
+		/* Re-check in case the utility statement changed our GUCs. */
+		do_log = peql_log_utility && peql_enabled && peql_log_min_duration >= 0;
+		if (!do_log)
+			return;
+
 		INSTR_TIME_SET_CURRENT(duration);
 		INSTR_TIME_SUBTRACT(duration, start);
 		msec = INSTR_TIME_GET_MILLISEC(duration);

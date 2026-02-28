@@ -1,6 +1,6 @@
 # Bug: `start` may be used uninitialized on error path in ProcessUtility hook
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Medium
 
