@@ -39,11 +39,19 @@ like($content, qr/Mem_allocated: \d+/,
 	"track_memory=on: Mem_allocated field present");
 
 # ── Test 4: Mem_allocated absent when track_memory = off ──
-$content = reset_and_get_log($node, query_sql => q{
+# Reset with track_memory=off in the same session so the reset entry
+# itself also omits Mem_allocated (avoids polluting the unlike check).
+$node->safe_psql('postgres', q{
+SET peql.track_memory = off;
+SELECT pg_enhanced_query_logging_reset();
+});
+$node->safe_psql('postgres', q{
 SET peql.log_verbosity = 'full';
 SET peql.track_memory = off;
 SELECT generate_series(1, 100);
 });
+sleep 1;
+$content = slurp_file(peql_log_path($node));
 
 unlike($content, qr/Mem_allocated:/,
 	"track_memory=off: Mem_allocated field absent");
