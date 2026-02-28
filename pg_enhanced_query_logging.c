@@ -970,7 +970,6 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 	TimestampTz	now;
 	pg_time_t	stamp_time;
 	char		timebuf[128];
-	struct pg_tm *tm_info;
 	int			usec;
 
 	const char *user  = NULL;
@@ -1013,20 +1012,25 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 	/* ---- # Time: line ---- */
 	now = GetCurrentTimestamp();
 	stamp_time = timestamptz_to_time_t(now);
-	tm_info = pg_localtime(&stamp_time, log_timezone);
 
-	usec = (int)(now % 1000000);
-	if (usec < 0) usec += 1000000;
+	{
+		struct pg_tm tm_result;
+		fsec_t		fsec;
+		int			tz;
 
-	snprintf(timebuf, sizeof(timebuf),
-			 "%04d-%02d-%02dT%02d:%02d:%02d.%06d",
-			 tm_info->tm_year + 1900,
-			 tm_info->tm_mon + 1,
-			 tm_info->tm_mday,
-			 tm_info->tm_hour,
-			 tm_info->tm_min,
-			 tm_info->tm_sec,
-			 usec);
+		timestamp2tm(now, &tz, &tm_result, &fsec, NULL, NULL);
+		usec = (int) fsec;
+
+		snprintf(timebuf, sizeof(timebuf),
+				 "%04d-%02d-%02dT%02d:%02d:%02d.%06d",
+				 tm_result.tm_year,
+				 tm_result.tm_mon,
+				 tm_result.tm_mday,
+				 tm_result.tm_hour,
+				 tm_result.tm_min,
+				 tm_result.tm_sec,
+				 usec);
+	}
 
 	appendStringInfo(buf, "# Time: %s\n", timebuf);
 
@@ -1447,7 +1451,6 @@ peql_format_utility_entry(StringInfo buf, const char *queryString,
 	TimestampTz	now;
 	pg_time_t	stamp_time;
 	char		timebuf[128];
-	struct pg_tm *tm_info;
 	int			usec;
 	const char *user  = NULL;
 	const char *host  = NULL;
@@ -1468,20 +1471,25 @@ peql_format_utility_entry(StringInfo buf, const char *queryString,
 
 	now = GetCurrentTimestamp();
 	stamp_time = timestamptz_to_time_t(now);
-	tm_info = pg_localtime(&stamp_time, log_timezone);
 
-	usec = (int)(now % 1000000);
-	if (usec < 0) usec += 1000000;
+	{
+		struct pg_tm tm_result;
+		fsec_t		fsec;
+		int			tz;
 
-	snprintf(timebuf, sizeof(timebuf),
-			 "%04d-%02d-%02dT%02d:%02d:%02d.%06d",
-			 tm_info->tm_year + 1900,
-			 tm_info->tm_mon + 1,
-			 tm_info->tm_mday,
-			 tm_info->tm_hour,
-			 tm_info->tm_min,
-			 tm_info->tm_sec,
-			 usec);
+		timestamp2tm(now, &tz, &tm_result, &fsec, NULL, NULL);
+		usec = (int) fsec;
+
+		snprintf(timebuf, sizeof(timebuf),
+				 "%04d-%02d-%02dT%02d:%02d:%02d.%06d",
+				 tm_result.tm_year,
+				 tm_result.tm_mon,
+				 tm_result.tm_mday,
+				 tm_result.tm_hour,
+				 tm_result.tm_min,
+				 tm_result.tm_sec,
+				 usec);
+	}
 
 	appendStringInfo(buf, "# Time: %s\n", timebuf);
 	appendStringInfo(buf, "# User@Host: %s[%s] @ %s []\n", user, user, host);

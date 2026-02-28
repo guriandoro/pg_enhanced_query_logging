@@ -1,6 +1,6 @@
 # Improvement: Fragile microsecond extraction from TimestampTz
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Low
 
