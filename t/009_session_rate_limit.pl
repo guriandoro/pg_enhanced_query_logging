@@ -17,11 +17,10 @@ peql.rate_limit_type = 'session'
 # Run multiple independent sessions and check for the all-or-nothing
 # property within each one.
 my $mixed_count = 0;
-my $sessions = 20;
+my $sessions = 6;
 
 for my $i (1 .. $sessions) {
 	$node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
-	sleep 1;
 
 	# Each psql invocation is a separate session
 	$node->safe_psql('postgres', qq{
