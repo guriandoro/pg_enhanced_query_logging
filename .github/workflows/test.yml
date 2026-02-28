@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        pg_version: ['17', '18']
+        exclude:
+          # PG 18 packages may not be available on all platforms yet
+          - os: macos-latest
+            pg_version: '18'
+
+    runs-on: ${{ matrix.os }}
+    name: PG ${{ matrix.pg_version }} / ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg
+          sudo apt-get update
+          sudo apt-get install -y \
+            postgresql-${{ matrix.pg_version }} \
+            postgresql-server-dev-${{ matrix.pg_version }} \
+            libipc-run-perl
+          echo "/usr/lib/postgresql/${{ matrix.pg_version }}/bin" >> $GITHUB_PATH
+
+      - name: Install PostgreSQL (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install postgresql@${{ matrix.pg_version }}
+          echo "$(brew --prefix postgresql@${{ matrix.pg_version }})/bin" >> $GITHUB_PATH
+
+      - name: Build and install extension
+        run: |
+          make USE_PGXS=1
+          sudo make install USE_PGXS=1
+
+      - name: Run pg_regress tests
+        run: make installcheck USE_PGXS=1
+
+      - name: Run TAP tests
+        run: make prove_installcheck USE_PGXS=1
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-pg${{ matrix.pg_version }}-${{ matrix.os }}
+          path: |
+            regression.diffs
+            regression.out
+            tmp_check/log/
+          retention-days: 7

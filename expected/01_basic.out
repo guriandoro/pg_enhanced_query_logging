@@ -6,7 +6,7 @@ SELECT extname, extversion FROM pg_extension
  WHERE extname = 'pg_enhanced_query_logging';
           extname          | extversion 
 ---------------------------+------------
- pg_enhanced_query_logging | 1.0
+ pg_enhanced_query_logging | 1.1
 (1 row)
 
 -- The reset function exists and is callable by superuser.

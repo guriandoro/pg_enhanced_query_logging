@@ -300,11 +300,6 @@ SQL
 rate limit, because `always_log_duration = 0` means any query (duration >= 0)
 bypasses the limiter.
 
-**Known issue:** setting `rate_limit_always_log_duration = 0` currently does
-NOT trigger the always-log path due to a `> 0` guard in the code (see
-`bugs_and_improvements/21_*`). The query may still appear if it passes the
-normal rate limiter draw. Test will need updating after the fix.
-
 ### 11.5 Session-mode rate limiting
 
 ```bash
@@ -613,7 +608,8 @@ psql -d postgres -c "SET work_mem = '64kB'; WITH big AS (SELECT generate_series(
 ## 20. Automated Tests
 
 In addition to the manual tests above, the extension includes automated test
-suites.
+suites. A shared helper module (`t/PeqlNode.pm`) provides common setup,
+teardown, and log-reading logic used by the TAP tests.
 
 ### 20.1 SQL Regression Tests
 
@@ -639,6 +635,38 @@ Test files:
 - `t/001_basic_logging.pl` -- log file creation, pt-query-digest format, reset function, enable/disable
 - `t/002_rate_limiting.pl` -- rate limit sampling, metadata output, always-log override
 - `t/003_extended_metrics.pl` -- verbosity levels, buffer/WAL metrics, plan quality indicators, utility logging, row counts
+- `t/004_nested_logging.pl` -- nested statement logging (PL/pgSQL inner statements)
+- `t/005_parameter_values.pl` -- parameter value logging, NULL handling, prepared statements
+- `t/006_query_plan.pl` -- EXPLAIN plan output in text and JSON format
+- `t/007_planning_time.pl` -- planning time tracking with verbosity levels
+- `t/008_min_duration.pl` -- duration threshold filtering with pg_sleep
+- `t/009_session_rate_limit.pl` -- session-mode rate limiting (all-or-nothing)
+- `t/010_edge_cases.pl` -- disk sort, disk temp table, memory tracking, schema field changes
+
+### 20.3 Meson Build
+
+The extension supports building with Meson (PostgreSQL 16+) in addition to
+Make. When building as part of the PostgreSQL source tree:
+
+```bash
+meson setup build
+cd build
+meson test -C . --suite pg_enhanced_query_logging
+```
+
+The `meson.build` file declares the shared module, regression tests, TAP
+tests, and extension data files.
+
+### 20.4 CI/CD
+
+Automated tests run on every push and pull request via GitHub Actions
+(`.github/workflows/test.yml`). The CI matrix covers:
+
+- **Platforms**: Ubuntu and macOS
+- **PostgreSQL versions**: 17 and 18
+- **Test suites**: pg_regress (SQL) and TAP (Perl)
+
+Test artifacts (diffs, logs) are uploaded on failure for debugging.
 
 ## 21. Clean Up
 

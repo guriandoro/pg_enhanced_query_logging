@@ -49,8 +49,8 @@ $node->safe_psql('postgres', $batch);
 
 $content = slurp_file($log_file);
 @entries = ($content =~ /^# Time:/mg);
-cmp_ok(scalar @entries, '<', 200,
-	"rate_limit=1000 logs fewer than 200 out of 200 queries");
+cmp_ok(scalar @entries, '<', 10,
+	"rate_limit=1000 logs very few out of 200 queries");
 
 # ── Test 3: Log_slow_rate_type and Log_slow_rate_limit appear in output ──
 $node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");

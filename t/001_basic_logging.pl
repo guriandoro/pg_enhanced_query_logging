@@ -25,8 +25,7 @@ my $log_file = "$data_dir/log/peql-slow.log";
 # ── Test 1: log file is created after a query ──
 $node->safe_psql('postgres', "SELECT 'hello_peql'");
 
-# Give it a moment for the file to be written
-$node->poll_query_until('postgres', "SELECT 1", '1');
+sleep 1;
 
 ok(-f $log_file, "log file exists after running a query");
 
@@ -56,16 +55,21 @@ like($content, qr/SELECT 'hello_peql'/,
 # ── Test 5: reset function truncates the log ──
 $node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
 
+# After reset the old file is renamed; issue a query so a new log file
+# is created, then read it.
+$node->safe_psql('postgres', "SELECT 'after_reset_marker'");
+sleep 1;
+
 my $after_reset = slurp_file($log_file);
-# After reset, the file should exist but the previous content gone.
-# The reset call itself may or may not be logged (it's a SQL function
-# that runs SELECT internally), so just check the old query is gone.
 unlike($after_reset, qr/hello_peql/,
 	"log file no longer contains previous query after reset");
 
 # ── Test 6: logging disabled when peql.enabled = off ──
 $node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
+$node->safe_psql('postgres', "SELECT 'post_reset_6'");
+sleep 1;
 $node->safe_psql('postgres', "SET peql.enabled = off; SELECT 'should_not_appear'");
+sleep 1;
 
 my $disabled_content = slurp_file($log_file);
 unlike($disabled_content, qr/should_not_appear/,
@@ -73,7 +77,10 @@ unlike($disabled_content, qr/should_not_appear/,
 
 # ── Test 7: logging disabled when log_min_duration = -1 ──
 $node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
+$node->safe_psql('postgres', "SELECT 'post_reset_7'");
+sleep 1;
 $node->safe_psql('postgres', "SET peql.log_min_duration = '-1'; SELECT 'also_not_logged'");
+sleep 1;
 
 my $min_dur_content = slurp_file($log_file);
 unlike($min_dur_content, qr/also_not_logged/,
@@ -84,6 +91,7 @@ $node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
 $node->safe_psql('postgres', "SELECT 'entry_one'");
 $node->safe_psql('postgres', "SELECT 'entry_two'");
 
+sleep 1;
 my $multi = slurp_file($log_file);
 my @time_lines = ($multi =~ /^# Time:/mg);
 cmp_ok(scalar @time_lines, '>=', 2,
