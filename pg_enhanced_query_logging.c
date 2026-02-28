@@ -586,7 +586,8 @@ peql_planner(Query *parse, const char *query_string,
 
 	INSTR_TIME_SET_CURRENT(duration);
 	INSTR_TIME_SUBTRACT(duration, start);
-	peql_current_plan_time_ms = INSTR_TIME_GET_MILLISEC(duration);
+	if (planner_nesting_level == 0)
+		peql_current_plan_time_ms = INSTR_TIME_GET_MILLISEC(duration);
 
 	return result;
 }

@@ -1,6 +1,6 @@
 # Bug: `planner_nesting_level` is maintained but never read
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Medium
 
