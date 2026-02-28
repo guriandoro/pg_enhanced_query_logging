@@ -197,7 +197,7 @@ Adds buffer, WAL, JIT, plan quality, and memory metrics:
 # Query_time: 0.523411  Lock_time: 0.000000  Rows_sent: 42  Rows_examined: 15000
 # Rows_affected: 0
 # Shared_blks_hit: 128  Shared_blks_read: 42  Shared_blks_dirtied: 0  Shared_blks_written: 0
-# Local_blks_hit: 0  Local_blks_read: 0  Local_blks_written: 0
+# Local_blks_hit: 0  Local_blks_read: 0  Local_blks_dirtied: 0  Local_blks_written: 0
 # Temp_blks_read: 0  Temp_blks_written: 0
 # Shared_blk_read_time: 0.001234  Shared_blk_write_time: 0.000000
 # WAL_records: 0  WAL_bytes: 0  WAL_fpi: 0
@@ -227,6 +227,7 @@ SELECT * FROM orders WHERE status = 'pending';
 | `Shared_blks_written` | `BufferUsage` | full | Shared blocks written |
 | `Local_blks_hit` | `BufferUsage` | full | Local buffer hits |
 | `Local_blks_read` | `BufferUsage` | full | Local blocks read |
+| `Local_blks_dirtied` | `BufferUsage` | full | Local blocks dirtied |
 | `Local_blks_written` | `BufferUsage` | full | Local blocks written |
 | `Temp_blks_read` | `BufferUsage` | full | Temp blocks read |
 | `Temp_blks_written` | `BufferUsage` | full | Temp blocks written |

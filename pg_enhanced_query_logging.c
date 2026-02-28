@@ -1054,9 +1054,11 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 		appendStringInfo(buf,
 						 "# Local_blks_hit: " INT64_FORMAT
 						 "  Local_blks_read: " INT64_FORMAT
+						 "  Local_blks_dirtied: " INT64_FORMAT
 						 "  Local_blks_written: " INT64_FORMAT "\n",
 						 bu->local_blks_hit,
 						 bu->local_blks_read,
+						 bu->local_blks_dirtied,
 						 bu->local_blks_written);
 
 		appendStringInfo(buf,

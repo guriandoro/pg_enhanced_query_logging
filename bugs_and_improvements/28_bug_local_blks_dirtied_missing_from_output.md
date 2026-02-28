@@ -1,6 +1,6 @@
 # Bug: `Local_blks_dirtied` is missing from buffer output at full verbosity
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Low
 
