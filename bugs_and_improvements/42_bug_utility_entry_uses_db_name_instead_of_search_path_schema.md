@@ -1,6 +1,6 @@
 # Bug: Utility entry `Schema` field uses database name instead of search_path
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Low
 

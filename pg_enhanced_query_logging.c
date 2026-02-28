@@ -1543,8 +1543,32 @@ peql_format_utility_entry(StringInfo buf, const char *queryString,
 
 	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_STANDARD)
 	{
-		appendStringInfo(buf, "# Thread_id: %d  Schema: %s  Last_errno: 0  Killed: 0\n",
-						 MyProcPid, db);
+		const char *schema_name = NULL;
+
+		PG_TRY();
+		{
+			List   *search_path = fetch_search_path(false);
+			if (search_path != NIL)
+			{
+				Oid		first_ns = linitial_oid(search_path);
+
+				schema_name = get_namespace_name(first_ns);
+				list_free(search_path);
+			}
+		}
+		PG_CATCH();
+		{
+			FlushErrorState();
+			schema_name = NULL;
+		}
+		PG_END_TRY();
+
+		if (schema_name)
+			appendStringInfo(buf, "# Thread_id: %d  Schema: %s.%s  Last_errno: 0  Killed: 0\n",
+							 MyProcPid, db, schema_name);
+		else
+			appendStringInfo(buf, "# Thread_id: %d  Schema: %s  Last_errno: 0  Killed: 0\n",
+							 MyProcPid, db);
 	}
 
 	appendStringInfo(buf,
