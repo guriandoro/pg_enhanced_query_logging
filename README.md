@@ -339,11 +339,11 @@ The extension installs hooks in `_PG_init()`, chaining with any previously insta
                                                      │
              ┌───────────────────────────────────────┼───────────────────────────────────────┐
              │                                       │                                       │
-    ┌────────▼─────────┐                ┌────────────▼──────────┐              ┌──────────────▼──────────┐
-    │  planner_hook     │                │  ExecutorStart_hook   │              │  ProcessUtility_hook    │
-    │  measure planning │                │  enable INSTRUMENT_ALL│              │  time DDL statements    │
-    │  time             │                └────────────┬──────────┘              └─────────────────────────┘
-    └──────────────────┘                              │
+    ┌────────▼──────────┐                ┌───────────▼────────────┐              ┌───────────▼───────────┐
+    │  planner_hook     │                │  ExecutorStart_hook    │              │  ProcessUtility_hook  │
+    │  measure planning │                │  enable INSTRUMENT_ALL │              │  time DDL statements  │
+    │  time             │                └────────────┬───────────┘              └───────────────────────┘
+    └───────────────────┘                             │
                                          ┌────────────▼──────────┐
                                          │  ExecutorRun_hook     │
                                          │  track nesting depth  │
@@ -367,7 +367,7 @@ The extension installs hooks in `_PG_init()`, chaining with any previously insta
                                                       │
                                          ┌────────────▼──────────┐
                                          │  pt-query-digest      │
-                                         └────────────────────────┘
+                                         └───────────────────────┘
 ```
 
 ### Rate Limiting
