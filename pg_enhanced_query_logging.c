@@ -539,6 +539,23 @@ peql_planner(Query *parse, const char *query_string,
 static void
 peql_ExecutorStart(QueryDesc *queryDesc, int eflags)
 {
+	/*
+	 * Enable per-node instrumentation before the executor builds the plan
+	 * state tree.  ExecInitNode reads instrument_options to decide whether
+	 * to attach Instrumentation structs to each node; we need those for
+	 * Rows_examined, sort-spill detection, and other plan-tree metrics.
+	 *
+	 * At full verbosity we request INSTRUMENT_ALL (timing + buffers); at
+	 * lower levels INSTRUMENT_TIMER suffices for the top-level totaltime.
+	 */
+	if (peql_active())
+	{
+		if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_FULL)
+			queryDesc->instrument_options |= INSTRUMENT_ALL;
+		else
+			queryDesc->instrument_options |= INSTRUMENT_TIMER;
+	}
+
 	/* Chain to any previously-installed hook, or the standard function. */
 	if (prev_ExecutorStart)
 		prev_ExecutorStart(queryDesc, eflags);
@@ -546,9 +563,8 @@ peql_ExecutorStart(QueryDesc *queryDesc, int eflags)
 		standard_ExecutorStart(queryDesc, eflags);
 
 	/*
-	 * When active, ensure totaltime instrumentation is allocated so we can
-	 * measure overall execution duration in ExecutorEnd.  INSTRUMENT_ALL
-	 * also captures buffer and WAL counters used at full verbosity.
+	 * Ensure the top-level totaltime counter exists so ExecutorEnd can
+	 * read overall execution duration regardless of verbosity level.
 	 */
 	if (peql_active())
 	{

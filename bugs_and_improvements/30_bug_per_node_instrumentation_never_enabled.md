@@ -1,6 +1,6 @@
 # Bug: Per-node plan instrumentation never enabled, making Rows_examined always 0
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Critical
 
