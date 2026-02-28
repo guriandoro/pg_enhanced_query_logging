@@ -24,14 +24,20 @@
 #include "postgres.h"
 
 #include <limits.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "executor/executor.h"
 #include "executor/instrument.h"
 #include "fmgr.h"
+#include "lib/stringinfo.h"
+#include "libpq/libpq-be.h"
 #include "miscadmin.h"
+#include "pgtime.h"
+#include "postmaster/syslogger.h"
 #include "storage/fd.h"
 #include "utils/guc.h"
+#include "utils/timestamp.h"
 
 PG_MODULE_MAGIC_EXT(
 	.name = "pg_enhanced_query_logging",
@@ -109,8 +115,12 @@ static void peql_ExecutorRun(QueryDesc *queryDesc,
 static void peql_ExecutorFinish(QueryDesc *queryDesc);
 static void peql_ExecutorEnd(QueryDesc *queryDesc);
 
-/* Forward declaration for the log-writing stub. */
+/* Forward declarations for log formatting and file I/O. */
 static void peql_write_log_entry(QueryDesc *queryDesc, double duration_ms);
+static void peql_resolve_log_path(char *result, size_t resultsize);
+static void peql_format_entry(StringInfo buf, QueryDesc *queryDesc,
+							  double duration_ms);
+static void peql_flush_to_file(const char *data, int len);
 
 /* SQL-callable reset function. */
 PG_FUNCTION_INFO_V1(pg_enhanced_query_logging_reset);
@@ -339,21 +349,265 @@ peql_ExecutorEnd(QueryDesc *queryDesc)
 
 /*
  * ──────────────────────────────────────────────────────────────────────────
- * Log-writing stub
+ * Log path resolution
  *
- * Phase 1: emits a one-line notice via elog() to confirm the hook fires.
- * Phase 2 will replace this with the full pt-query-digest-compatible
- * formatter and file writer.
+ * Builds the full filesystem path for the slow query log file.  Uses
+ * peql.log_directory if set, otherwise falls back to the PostgreSQL
+ * log_directory GUC.  Relative paths are resolved against DataDir.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static void
+peql_resolve_log_path(char *result, size_t resultsize)
+{
+	const char *dir;
+	const char *fname;
+
+	/* Pick the directory: our override, or PostgreSQL's log_directory. */
+	if (peql_log_directory && peql_log_directory[0] != '\0')
+		dir = peql_log_directory;
+	else
+		dir = Log_directory;
+
+	fname = (peql_log_filename && peql_log_filename[0] != '\0')
+		? peql_log_filename : "peql-slow.log";
+
+	/* Absolute paths are used as-is; relative paths resolve to DataDir. */
+	if (is_absolute_path(dir))
+		snprintf(result, resultsize, "%s/%s", dir, fname);
+	else
+		snprintf(result, resultsize, "%s/%s/%s", DataDir, dir, fname);
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
+ * Log entry formatter
+ *
+ * Builds a pt-query-digest-compatible slow log entry into the provided
+ * StringInfo buffer.  The format mirrors the MySQL slow query log so that
+ * pt-query-digest --type slowlog can parse it directly.
+ *
+ * Minimum output (all verbosity levels):
+ *   # Time: <ISO-8601>
+ *   # User@Host: user[user] @ host []
+ *   # Query_time: N.NNNNNN  Lock_time: 0.000000  Rows_sent: N  Rows_examined: N
+ *   SET timestamp=N;
+ *   <query text>;
+ *
+ * Standard verbosity adds: Thread_id, Schema, Rows_affected, Bytes_sent
+ * Full verbosity adds all extended metrics (handled in Phase 3).
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static void
+peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
+{
+	TimestampTz	now;
+	pg_time_t	stamp_time;
+	char		timebuf[128];
+	struct pg_tm *tm_info;
+	int			usec;
+
+	const char *user  = NULL;
+	const char *host  = NULL;
+	const char *db    = NULL;
+	uint64		rows_processed;
+	double		duration_sec;
+	const char *query_text;
+
+	/* ---- Gather connection metadata ---- */
+	if (MyProcPort)
+	{
+		user = MyProcPort->user_name;
+		host = MyProcPort->remote_host;
+		db   = MyProcPort->database_name;
+	}
+	if (user == NULL) user = "";
+	if (host == NULL) host = "";
+	if (db == NULL)   db   = "";
+
+	rows_processed = queryDesc->estate->es_processed;
+	duration_sec   = duration_ms / 1000.0;
+
+	/* Use the original source text; fall back to an empty string. */
+	query_text = queryDesc->sourceText ? queryDesc->sourceText : "";
+
+	/*
+	 * ---- # Time: line ----
+	 *
+	 * ISO-8601 timestamp with microseconds, matching the format that
+	 * pt-query-digest recognises: YYYY-MM-DDTHH:MM:SS.uuuuuuZ
+	 */
+	now = GetCurrentTimestamp();
+	stamp_time = timestamptz_to_time_t(now);
+	tm_info = pg_localtime(&stamp_time, log_timezone);
+
+	/* Extract microseconds from the TimestampTz (PG epoch microseconds). */
+	usec = (int)(now % 1000000);
+	if (usec < 0) usec += 1000000;
+
+	snprintf(timebuf, sizeof(timebuf),
+			 "%04d-%02d-%02dT%02d:%02d:%02d.%06d",
+			 tm_info->tm_year + 1900,
+			 tm_info->tm_mon + 1,
+			 tm_info->tm_mday,
+			 tm_info->tm_hour,
+			 tm_info->tm_min,
+			 tm_info->tm_sec,
+			 usec);
+
+	appendStringInfo(buf, "# Time: %s\n", timebuf);
+
+	/*
+	 * ---- # User@Host: line ----
+	 *
+	 * Format: user[user] @ host []
+	 * The bracketed repeat of user mirrors MySQL slow log convention.
+	 */
+	appendStringInfo(buf, "# User@Host: %s[%s] @ %s []\n", user, user, host);
+
+	/*
+	 * ---- Standard verbosity: Thread_id, Schema ----
+	 *
+	 * Thread_id maps to the PostgreSQL backend PID.
+	 * Schema is the database name (schema-level detail added in Phase 3).
+	 */
+	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_STANDARD)
+	{
+		appendStringInfo(buf, "# Thread_id: %d  Schema: %s\n",
+						 MyProcPid, db);
+	}
+
+	/*
+	 * ---- # Query_time / Lock_time / Rows_sent / Rows_examined ----
+	 *
+	 * This is the core line that pt-query-digest requires.
+	 *  - Query_time: total execution time in seconds (float)
+	 *  - Lock_time:  placeholder 0 for now (proper lock-wait time in Phase 3)
+	 *  - Rows_sent:  for SELECT, the number of rows returned to the client
+	 *  - Rows_examined: for now, same as Rows_sent (plan-tree walk in Phase 3)
+	 *
+	 * For DML (INSERT/UPDATE/DELETE), Rows_sent = 0 and Rows_examined = 0;
+	 * the affected count goes to Rows_affected on the standard line.
+	 */
+	if (queryDesc->operation == CMD_SELECT)
+	{
+		appendStringInfo(buf,
+						 "# Query_time: %f  Lock_time: 0.000000"
+						 "  Rows_sent: " UINT64_FORMAT
+						 "  Rows_examined: " UINT64_FORMAT "\n",
+						 duration_sec,
+						 rows_processed,
+						 rows_processed);
+	}
+	else
+	{
+		appendStringInfo(buf,
+						 "# Query_time: %f  Lock_time: 0.000000"
+						 "  Rows_sent: 0  Rows_examined: 0\n",
+						 duration_sec);
+	}
+
+	/* Rows_affected for DML at standard+ verbosity. */
+	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_STANDARD &&
+		queryDesc->operation != CMD_SELECT)
+	{
+		appendStringInfo(buf, "# Rows_affected: " UINT64_FORMAT "\n",
+						 rows_processed);
+	}
+
+	/*
+	 * ---- SET timestamp line ----
+	 *
+	 * Required by pt-query-digest to associate a UNIX timestamp with
+	 * each entry.  We use the current time (end-of-query).
+	 */
+	appendStringInfo(buf, "SET timestamp=%ld;\n", (long) stamp_time);
+
+	/*
+	 * ---- Query text ----
+	 *
+	 * Terminated by a semicolon and a newline, which is how pt-query-digest
+	 * delimits the end of one query entry.
+	 */
+	appendStringInfoString(buf, query_text);
+
+	/* Ensure the query text ends with a semicolon. */
+	if (buf->len > 0 && buf->data[buf->len - 1] != ';')
+		appendStringInfoChar(buf, ';');
+	appendStringInfoChar(buf, '\n');
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
+ * File writer
+ *
+ * Appends pre-formatted data to the slow query log file.  Uses
+ * AllocateFile/FreeFile so PostgreSQL tracks the file descriptor and
+ * cleans up on transaction abort.
+ *
+ * Each call opens the file, writes, and closes.  This is safe for
+ * concurrent backends because O_APPEND ensures atomic writes on POSIX
+ * when the data fits in PIPE_BUF (typically 4-64 KB, well above a
+ * single log entry).
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static void
+peql_flush_to_file(const char *data, int len)
+{
+	char	logpath[MAXPGPATH];
+	char	dirpath[MAXPGPATH];
+	char   *slash;
+	FILE   *fp;
+
+	peql_resolve_log_path(logpath, sizeof(logpath));
+
+	fp = AllocateFile(logpath, "a");
+	if (fp == NULL)
+	{
+		/*
+		 * If the directory doesn't exist, try to create it and retry.
+		 * This mirrors PostgreSQL's own syslogger behaviour.
+		 */
+		strlcpy(dirpath, logpath, sizeof(dirpath));
+
+		/* Trim the filename component to get the directory. */
+		slash = strrchr(dirpath, '/');
+		if (slash)
+			*slash = '\0';
+
+		(void) MakePGDirectory(dirpath);
+
+		fp = AllocateFile(logpath, "a");
+		if (fp == NULL)
+		{
+			ereport(LOG,
+					(errcode_for_file_access(),
+					 errmsg("peql: could not open log file \"%s\": %m",
+							logpath)));
+			return;
+		}
+	}
+
+	(void) fwrite(data, 1, len, fp);
+	FreeFile(fp);
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
+ * Top-level log entry writer
+ *
+ * Called from ExecutorEnd when a query exceeds the duration threshold.
+ * Formats the entry and flushes it to the log file.
  * ──────────────────────────────────────────────────────────────────────────
  */
 static void
 peql_write_log_entry(QueryDesc *queryDesc, double duration_ms)
 {
-	elog(DEBUG1, "peql: query duration %.3f ms (would log to %s/%s)",
-		 duration_ms,
-		 (peql_log_directory && peql_log_directory[0] != '\0')
-		 ? peql_log_directory : "<log_directory>",
-		 peql_log_filename ? peql_log_filename : "peql-slow.log");
+	StringInfoData buf;
+
+	initStringInfo(&buf);
+	peql_format_entry(&buf, queryDesc, duration_ms);
+	peql_flush_to_file(buf.data, buf.len);
+	pfree(buf.data);
 }
 
 /*
@@ -365,18 +619,39 @@ peql_write_log_entry(QueryDesc *queryDesc, double duration_ms)
 /*
  * pg_enhanced_query_logging_reset()
  *
- * Truncates the slow query log file.  Stub implementation for Phase 1;
- * will perform actual file truncation once the file writer is in place.
+ * Truncates the slow query log file.  Returns true on success.
  */
 Datum
 pg_enhanced_query_logging_reset(PG_FUNCTION_ARGS)
 {
+	char	logpath[MAXPGPATH];
+	FILE   *fp;
+
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("must be superuser to reset the enhanced query log")));
 
-	elog(NOTICE, "peql: log reset requested (no-op until file writer is implemented)");
+	peql_resolve_log_path(logpath, sizeof(logpath));
+
+	/*
+	 * Open with "w" (truncate) rather than "a" (append).  If the file
+	 * doesn't exist yet this creates it, which is fine.
+	 */
+	fp = AllocateFile(logpath, "w");
+	if (fp == NULL)
+	{
+		ereport(WARNING,
+				(errcode_for_file_access(),
+				 errmsg("peql: could not truncate log file \"%s\": %m",
+						logpath)));
+		PG_RETURN_BOOL(false);
+	}
+
+	FreeFile(fp);
+
+	ereport(NOTICE,
+			(errmsg("peql: log file \"%s\" has been truncated", logpath)));
 
 	PG_RETURN_BOOL(true);
 }

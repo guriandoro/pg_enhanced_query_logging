@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: phase2-core-logging
     content: "Phase 2 - Core logging: Implement the slow log formatter producing pt-query-digest-compatible output (Time, User@Host, Query_time, Lock_time, Rows_sent, Rows_examined, SET timestamp, query text). Implement file I/O (open/append/close per entry). Wire ExecutorEnd_hook to format+write. Test with pt-query-digest to verify compatibility."
-    status: pending
+    status: completed
   - id: phase3-extended-metrics
     content: "Phase 3 - Extended metrics: Add BufferUsage delta tracking (shared/local/temp blocks), WalUsage delta tracking, planning time, JIT metrics, plan-tree walking for Full_scan/Filesort/Temp_table booleans, memory context tracking. Gate behind log_verbosity levels (minimal/standard/full). Add track_io_timing, track_wal, track_memory, track_planning GUCs."
     status: pending
