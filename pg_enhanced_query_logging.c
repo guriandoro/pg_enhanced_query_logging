@@ -251,6 +251,34 @@ static void peql_append_params(StringInfo buf, ParamListInfo params);
 PG_FUNCTION_INFO_V1(pg_enhanced_query_logging_reset);
 
 /*
+ * GUC check hooks: reject log_filename values with path separators or
+ * ".." to prevent directory traversal, and log_directory values with "..".
+ */
+static bool
+peql_check_log_filename(char **newval, void **extra, GucSource source)
+{
+	if (*newval && (strchr(*newval, '/') || strchr(*newval, '\\') ||
+					strstr(*newval, "..")))
+	{
+		GUC_check_errdetail("peql.log_filename must not contain path separators "
+							"or \"..\" components.");
+		return false;
+	}
+	return true;
+}
+
+static bool
+peql_check_log_directory(char **newval, void **extra, GucSource source)
+{
+	if (*newval && strstr(*newval, ".."))
+	{
+		GUC_check_errdetail("peql.log_directory must not contain \"..\" components.");
+		return false;
+	}
+	return true;
+}
+
+/*
  * GUC assign hooks: reset session sampling decision when rate-limit
  * parameters change, so the new value takes effect immediately.
  */
@@ -308,7 +336,7 @@ _PG_init(void)
 							   "",
 							   PGC_SIGHUP,
 							   0,
-							   NULL, NULL, NULL);
+							   peql_check_log_directory, NULL, NULL);
 
 	/* ---- GUC: peql.log_filename ---- */
 	DefineCustomStringVariable("peql.log_filename",
@@ -318,7 +346,7 @@ _PG_init(void)
 							   "peql-slow.log",
 							   PGC_SIGHUP,
 							   0,
-							   NULL, NULL, NULL);
+							   peql_check_log_filename, NULL, NULL);
 
 	/* ---- GUC: peql.log_verbosity ---- */
 	DefineCustomEnumVariable("peql.log_verbosity",

@@ -1,6 +1,6 @@
 # Bug: `peql.log_filename` allows directory traversal and arbitrary file writes
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: High
 
