@@ -1289,38 +1289,47 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 	if (peql_log_parameter_values && queryDesc->params)
 		peql_append_params(buf, queryDesc->params);
 
-	/* ---- EXPLAIN plan output ---- */
+	/* ---- EXPLAIN plan output (wrapped in PG_TRY for parallel safety) ---- */
 	if (peql_log_query_plan && queryDesc->planstate)
 	{
-		ExplainState *es = NewExplainState();
-
-		es->analyze = true;
-		es->verbose = false;
-		es->buffers = (peql_log_verbosity >= PEQL_LOG_VERBOSITY_FULL);
-		es->wal     = (peql_track_wal &&
-					   peql_log_verbosity >= PEQL_LOG_VERBOSITY_FULL);
-		es->timing  = true;
-		es->summary = false;
-		es->format  = peql_log_query_plan_format;
-
-		ExplainBeginOutput(es);
-		ExplainPrintPlan(es, queryDesc);
-		if (es->costs)
-			ExplainPrintJITSummary(es, queryDesc);
-		ExplainEndOutput(es);
-
-		/* Trim trailing newline from EXPLAIN output. */
-		if (es->str->len > 0 && es->str->data[es->str->len - 1] == '\n')
-			es->str->data[--es->str->len] = '\0';
-
-		appendStringInfoString(buf, "# Plan:\n# ");
-		for (const char *p = es->str->data; *p; p++)
+		PG_TRY();
 		{
-			appendStringInfoChar(buf, *p);
-			if (*p == '\n')
-				appendStringInfoString(buf, "# ");
+			ExplainState *es = NewExplainState();
+
+			es->analyze = true;
+			es->verbose = false;
+			es->buffers = (peql_log_verbosity >= PEQL_LOG_VERBOSITY_FULL);
+			es->wal     = (peql_track_wal &&
+						   peql_log_verbosity >= PEQL_LOG_VERBOSITY_FULL);
+			es->timing  = true;
+			es->summary = false;
+			es->format  = peql_log_query_plan_format;
+
+			ExplainBeginOutput(es);
+			ExplainPrintPlan(es, queryDesc);
+			if (es->costs)
+				ExplainPrintJITSummary(es, queryDesc);
+			ExplainEndOutput(es);
+
+			/* Trim trailing newline from EXPLAIN output. */
+			if (es->str->len > 0 && es->str->data[es->str->len - 1] == '\n')
+				es->str->data[--es->str->len] = '\0';
+
+			appendStringInfoString(buf, "# Plan:\n# ");
+			for (const char *p = es->str->data; *p; p++)
+			{
+				appendStringInfoChar(buf, *p);
+				if (*p == '\n')
+					appendStringInfoString(buf, "# ");
+			}
+			appendStringInfoChar(buf, '\n');
 		}
-		appendStringInfoChar(buf, '\n');
+		PG_CATCH();
+		{
+			FlushErrorState();
+			appendStringInfoString(buf, "# Plan: <unavailable>\n");
+		}
+		PG_END_TRY();
 	}
 }
 

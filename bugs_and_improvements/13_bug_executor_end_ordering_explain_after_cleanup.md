@@ -1,6 +1,6 @@
 # Bug: EXPLAIN plan generated after ExecutorEnd chains to cleanup
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: High
 
