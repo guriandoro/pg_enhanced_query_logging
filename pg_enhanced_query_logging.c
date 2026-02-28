@@ -1240,7 +1240,14 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 		if (es->str->len > 0 && es->str->data[es->str->len - 1] == '\n')
 			es->str->data[--es->str->len] = '\0';
 
-		appendStringInfo(buf, "# Plan:\n# %s\n", es->str->data);
+		appendStringInfoString(buf, "# Plan:\n# ");
+		for (const char *p = es->str->data; *p; p++)
+		{
+			appendStringInfoChar(buf, *p);
+			if (*p == '\n')
+				appendStringInfoString(buf, "# ");
+		}
+		appendStringInfoChar(buf, '\n');
 	}
 }
 

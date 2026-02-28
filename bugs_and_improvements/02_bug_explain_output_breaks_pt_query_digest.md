@@ -1,6 +1,6 @@
 # Bug: EXPLAIN output breaks pt-query-digest parsing
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: High
 
