@@ -1,6 +1,6 @@
 # Bug: `fetch_search_path()` in ExecutorEnd can cause errors or catalog lock contention
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: High
 

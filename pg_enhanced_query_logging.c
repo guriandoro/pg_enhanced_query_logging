@@ -1057,16 +1057,24 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_STANDARD)
 	{
 		const char *schema_name = NULL;
-		List	   *search_path;
 
-		search_path = fetch_search_path(false);
-		if (search_path != NIL)
+		PG_TRY();
 		{
-			Oid		first_ns = linitial_oid(search_path);
+			List   *search_path = fetch_search_path(false);
+			if (search_path != NIL)
+			{
+				Oid		first_ns = linitial_oid(search_path);
 
-			schema_name = get_namespace_name(first_ns);
-			list_free(search_path);
+				schema_name = get_namespace_name(first_ns);
+				list_free(search_path);
+			}
 		}
+		PG_CATCH();
+		{
+			FlushErrorState();
+			schema_name = NULL;
+		}
+		PG_END_TRY();
 
 		if (schema_name)
 			appendStringInfo(buf, "# Thread_id: %d  Schema: %s.%s  Last_errno: 0  Killed: 0\n",
