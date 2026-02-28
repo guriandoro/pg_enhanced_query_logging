@@ -1451,12 +1451,32 @@ peql_format_utility_entry(StringInfo buf, const char *queryString,
 static void
 peql_write_log_entry(QueryDesc *queryDesc, double duration_ms)
 {
-	StringInfoData buf;
+	MemoryContext oldcxt;
+	MemoryContext logcxt;
 
-	initStringInfo(&buf);
-	peql_format_entry(&buf, queryDesc, duration_ms);
-	peql_flush_to_file(buf.data, buf.len);
-	pfree(buf.data);
+	logcxt = AllocSetContextCreate(CurrentMemoryContext,
+								   "peql log entry",
+								   ALLOCSET_DEFAULT_SIZES);
+	oldcxt = MemoryContextSwitchTo(logcxt);
+
+	PG_TRY();
+	{
+		StringInfoData buf;
+
+		initStringInfo(&buf);
+		peql_format_entry(&buf, queryDesc, duration_ms);
+		peql_flush_to_file(buf.data, buf.len);
+	}
+	PG_CATCH();
+	{
+		FlushErrorState();
+		ereport(LOG,
+				(errmsg("peql: error while writing log entry, skipping")));
+	}
+	PG_END_TRY();
+
+	MemoryContextSwitchTo(oldcxt);
+	MemoryContextDelete(logcxt);
 }
 
 /*
@@ -1466,12 +1486,32 @@ static void
 peql_write_utility_log_entry(const char *queryString, double duration_ms,
 							 ParamListInfo params)
 {
-	StringInfoData buf;
+	MemoryContext oldcxt;
+	MemoryContext logcxt;
 
-	initStringInfo(&buf);
-	peql_format_utility_entry(&buf, queryString, duration_ms, params);
-	peql_flush_to_file(buf.data, buf.len);
-	pfree(buf.data);
+	logcxt = AllocSetContextCreate(CurrentMemoryContext,
+								   "peql utility log entry",
+								   ALLOCSET_DEFAULT_SIZES);
+	oldcxt = MemoryContextSwitchTo(logcxt);
+
+	PG_TRY();
+	{
+		StringInfoData buf;
+
+		initStringInfo(&buf);
+		peql_format_utility_entry(&buf, queryString, duration_ms, params);
+		peql_flush_to_file(buf.data, buf.len);
+	}
+	PG_CATCH();
+	{
+		FlushErrorState();
+		ereport(LOG,
+				(errmsg("peql: error while writing utility log entry, skipping")));
+	}
+	PG_END_TRY();
+
+	MemoryContextSwitchTo(oldcxt);
+	MemoryContextDelete(logcxt);
 }
 
 /*

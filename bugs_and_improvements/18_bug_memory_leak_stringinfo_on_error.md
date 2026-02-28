@@ -1,6 +1,6 @@
 # Bug: StringInfo memory leak if formatting or file I/O throws an error
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Medium
 
