@@ -35,8 +35,8 @@ my $content = slurp_file($log_file);
 like($content, qr/^# Time: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+$/m,
 	"log entry contains # Time: line in ISO-8601 format");
 
-like($content, qr/^# User@Host: \S+\[\S+\] @ \S* \[\]$/m,
-	"log entry contains # User@Host: line");
+like($content, qr/^# User\@Host: \S+\[\S+\] @ \S* \[\]$/m,
+	"log entry contains # User\@Host: line");
 
 like($content, qr/^# Query_time: [\d.]+\s+Lock_time: [\d.]+\s+Rows_sent: \d+\s+Rows_examined: \d+$/m,
 	"log entry contains # Query_time/Lock_time/Rows_sent/Rows_examined line");
