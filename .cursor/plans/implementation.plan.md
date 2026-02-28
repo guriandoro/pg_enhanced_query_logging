@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: phase5-testing
     content: "Phase 5 - Testing: SQL regression tests (GUC validation, extension load/unload, reset function). TAP tests (log file creation, output format verification, rate limiting behavior, metric accuracy, pt-query-digest parsing). Test configuration file."
-    status: pending
+    status: completed
   - id: phase6-docs
     content: "Phase 6 - Documentation and polish: Comprehensive README.md with installation, configuration reference, output format specification, pt-query-digest usage examples, architecture notes, and contribution guidelines. Code review pass for comments and clarity."
     status: pending

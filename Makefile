@@ -11,6 +11,10 @@ PGFILEDESC = "pg_enhanced_query_logging - enhanced query logging for pt-query-di
 EXTENSION = pg_enhanced_query_logging
 DATA = pg_enhanced_query_logging--1.0.sql
 
+REGRESS = 01_basic 02_guc 03_filtering
+
+TAP_TESTS = 1
+
 ifdef USE_PGXS
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

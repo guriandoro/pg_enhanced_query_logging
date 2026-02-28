@@ -1,0 +1,219 @@
+-- 02_guc.sql: GUC variable validation
+-- Show defaults for all peql GUCs
+SHOW peql.enabled;
+ peql.enabled 
+--------------
+ on
+(1 row)
+
+SHOW peql.log_min_duration;
+ peql.log_min_duration 
+-----------------------
+ -1
+(1 row)
+
+SHOW peql.log_directory;
+ peql.log_directory 
+--------------------
+ 
+(1 row)
+
+SHOW peql.log_filename;
+ peql.log_filename 
+-------------------
+ peql-slow.log
+(1 row)
+
+SHOW peql.log_verbosity;
+ peql.log_verbosity 
+--------------------
+ standard
+(1 row)
+
+SHOW peql.log_utility;
+ peql.log_utility 
+------------------
+ off
+(1 row)
+
+SHOW peql.log_nested;
+ peql.log_nested 
+-----------------
+ off
+(1 row)
+
+SHOW peql.rate_limit;
+ peql.rate_limit 
+-----------------
+ 1
+(1 row)
+
+SHOW peql.rate_limit_type;
+ peql.rate_limit_type 
+----------------------
+ query
+(1 row)
+
+SHOW peql.rate_limit_always_log_duration;
+ peql.rate_limit_always_log_duration 
+-------------------------------------
+ 10s
+(1 row)
+
+SHOW peql.log_parameter_values;
+ peql.log_parameter_values 
+---------------------------
+ off
+(1 row)
+
+SHOW peql.log_query_plan;
+ peql.log_query_plan 
+---------------------
+ off
+(1 row)
+
+SHOW peql.log_query_plan_format;
+ peql.log_query_plan_format 
+----------------------------
+ text
+(1 row)
+
+SHOW peql.track_io_timing;
+ peql.track_io_timing 
+----------------------
+ on
+(1 row)
+
+SHOW peql.track_wal;
+ peql.track_wal 
+----------------
+ on
+(1 row)
+
+SHOW peql.track_memory;
+ peql.track_memory 
+-------------------
+ off
+(1 row)
+
+SHOW peql.track_planning;
+ peql.track_planning 
+---------------------
+ off
+(1 row)
+
+-- Test setting boolean GUCs
+SET peql.enabled = off;
+SHOW peql.enabled;
+ peql.enabled 
+--------------
+ off
+(1 row)
+
+SET peql.enabled = on;
+-- Test setting integer GUCs
+SET peql.log_min_duration = 500;
+SHOW peql.log_min_duration;
+ peql.log_min_duration 
+-----------------------
+ 500ms
+(1 row)
+
+SET peql.log_min_duration = 0;
+SHOW peql.log_min_duration;
+ peql.log_min_duration 
+-----------------------
+ 0
+(1 row)
+
+SET peql.log_min_duration = -1;
+SHOW peql.log_min_duration;
+ peql.log_min_duration 
+-----------------------
+ -1
+(1 row)
+
+-- Test enum GUCs
+SET peql.log_verbosity = 'minimal';
+SHOW peql.log_verbosity;
+ peql.log_verbosity 
+--------------------
+ minimal
+(1 row)
+
+SET peql.log_verbosity = 'standard';
+SHOW peql.log_verbosity;
+ peql.log_verbosity 
+--------------------
+ standard
+(1 row)
+
+SET peql.log_verbosity = 'full';
+SHOW peql.log_verbosity;
+ peql.log_verbosity 
+--------------------
+ full
+(1 row)
+
+-- Invalid enum value should fail
+\set ON_ERROR_STOP 0
+SET peql.log_verbosity = 'invalid';
+ERROR:  invalid value for parameter "peql.log_verbosity": "invalid"
+HINT:  Available values: minimal, standard, full.
+\set ON_ERROR_STOP 1
+-- Rate limit GUCs
+SET peql.rate_limit = 10;
+SHOW peql.rate_limit;
+ peql.rate_limit 
+-----------------
+ 10
+(1 row)
+
+SET peql.rate_limit = 1;
+SET peql.rate_limit_type = 'session';
+SHOW peql.rate_limit_type;
+ peql.rate_limit_type 
+----------------------
+ session
+(1 row)
+
+SET peql.rate_limit_type = 'query';
+SHOW peql.rate_limit_type;
+ peql.rate_limit_type 
+----------------------
+ query
+(1 row)
+
+-- Invalid rate_limit_type should fail
+\set ON_ERROR_STOP 0
+SET peql.rate_limit_type = 'invalid';
+ERROR:  invalid value for parameter "peql.rate_limit_type": "invalid"
+HINT:  Available values: session, query.
+\set ON_ERROR_STOP 1
+-- Query plan format GUCs
+SET peql.log_query_plan_format = 'json';
+SHOW peql.log_query_plan_format;
+ peql.log_query_plan_format 
+----------------------------
+ json
+(1 row)
+
+SET peql.log_query_plan_format = 'text';
+SHOW peql.log_query_plan_format;
+ peql.log_query_plan_format 
+----------------------------
+ text
+(1 row)
+
+-- Rate limit minimum is 1 (not 0)
+\set ON_ERROR_STOP 0
+SET peql.rate_limit = 0;
+ERROR:  0 is outside the valid range for parameter "peql.rate_limit" (1 .. 2147483647)
+\set ON_ERROR_STOP 1
+-- Reset all to defaults
+RESET peql.enabled;
+RESET peql.log_min_duration;
+RESET peql.log_verbosity;
+RESET peql.rate_limit;
+RESET peql.rate_limit_type;
+RESET peql.log_query_plan_format;
