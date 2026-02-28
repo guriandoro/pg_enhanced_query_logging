@@ -1,6 +1,6 @@
 # Bug: `snprintf` path truncation not checked in path resolution
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Low
 

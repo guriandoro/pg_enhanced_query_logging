@@ -864,10 +864,19 @@ peql_resolve_log_path(char *result, size_t resultsize)
 		? peql_log_filename : "peql-slow.log";
 
 	/* Absolute paths are used as-is; relative paths resolve to DataDir. */
-	if (is_absolute_path(dir))
-		snprintf(result, resultsize, "%s/%s", dir, fname);
-	else
-		snprintf(result, resultsize, "%s/%s/%s", DataDir, dir, fname);
+	{
+		int len;
+
+		if (is_absolute_path(dir))
+			len = snprintf(result, resultsize, "%s/%s", dir, fname);
+		else
+			len = snprintf(result, resultsize, "%s/%s/%s", DataDir, dir, fname);
+
+		if (len >= (int) resultsize)
+			ereport(LOG,
+					(errmsg("peql: log file path exceeds maximum length (%d bytes)",
+							(int) resultsize)));
+	}
 }
 
 /*
@@ -1664,7 +1673,11 @@ pg_enhanced_query_logging_reset(PG_FUNCTION_ARGS)
 				 errmsg("must be superuser to reset the enhanced query log")));
 
 	peql_resolve_log_path(logpath, sizeof(logpath));
-	snprintf(oldpath, sizeof(oldpath), "%s.old", logpath);
+
+	if (snprintf(oldpath, sizeof(oldpath), "%s.old", logpath) >= (int) sizeof(oldpath))
+		ereport(LOG,
+				(errmsg("peql: rotated log path exceeds maximum length (%d bytes)",
+						(int) sizeof(oldpath))));
 
 	/*
 	 * Rename instead of truncate to avoid racing with concurrent writers.
