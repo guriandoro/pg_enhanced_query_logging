@@ -106,7 +106,7 @@ All GUC variables are prefixed with `peql.` and can be set in `postgresql.conf` 
 |-----|------|---------|---------|-------------|
 | `peql.rate_limit` | int | `1` | SUSET | Log every Nth query or session. `1` = log all eligible queries |
 | `peql.rate_limit_type` | enum | `query` | SUSET | Sampling mode: `session` (decide once per backend) or `query` (decide per statement) |
-| `peql.rate_limit_always_log_duration` | int (ms) | `10000` | SUSET | Queries slower than this bypass the rate limiter entirely |
+| `peql.rate_limit_always_log_duration` | int (ms) | `10000` | SUSET | Queries slower than this bypass the rate limiter entirely. `0` = bypass for all queries, `-1` = disabled |
 
 ### Extended Tracking
 

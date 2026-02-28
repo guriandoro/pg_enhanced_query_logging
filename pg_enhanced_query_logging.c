@@ -362,10 +362,11 @@ _PG_init(void)
 	DefineCustomIntVariable("peql.rate_limit_always_log_duration",
 							"Duration (ms) that always bypasses the rate limiter.",
 							"Queries exceeding this threshold are logged "
-							"regardless of sampling.  10000 = 10 seconds.",
+							"regardless of sampling.  -1 = disabled, "
+							"0 = bypass for all queries, 10000 = 10 seconds.",
 							&peql_rate_limit_always_log_duration,
 							10000,
-							0, INT_MAX,
+							-1, INT_MAX,
 							PGC_SUSET,
 							GUC_UNIT_MS,
 							NULL, NULL, NULL);
@@ -648,8 +649,8 @@ peql_ExecutorFinish(QueryDesc *queryDesc)
 static bool
 peql_should_log(double duration_ms)
 {
-	/* Always-log override: very slow queries bypass the rate limiter. */
-	if (peql_rate_limit_always_log_duration > 0 &&
+	/* Always-log override: very slow queries bypass the rate limiter. (-1 = disabled) */
+	if (peql_rate_limit_always_log_duration >= 0 &&
 		duration_ms >= peql_rate_limit_always_log_duration)
 		return true;
 

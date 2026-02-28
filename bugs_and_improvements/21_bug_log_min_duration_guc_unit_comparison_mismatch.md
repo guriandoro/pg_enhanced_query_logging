@@ -1,6 +1,6 @@
 # Bug: GUC_UNIT_MS on `peql.log_min_duration` causes threshold comparison mismatch
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: High
 
