@@ -441,10 +441,36 @@ sudo dnf install postgresql17-devel perl-IPC-Run
 
 ```bash
 brew install postgresql@17
-cpan IPC::Run        # if not already installed
 ```
 
-Homebrew's `postgresql@*` formula includes the server dev files, `pg_regress`, and the Perl test modules. `IPC::Run` may need to be installed separately via `cpan` or `cpanm`.
+Homebrew's `postgresql@*` formula includes the server dev files, `pg_regress`, and the Perl test modules.
+
+`IPC::Run` is required for the TAP tests but is not included with the macOS system Perl. Install it with `cpan` (requires root) or `cpanm` (no root needed):
+
+```bash
+# Option A: cpan (installs to system Perl paths, requires sudo)
+sudo cpan IPC::Run
+
+# Option B: cpanm (installs to ~/perl5, no root required)
+brew install cpanminus
+cpanm IPC::Run
+```
+
+If you used `cpanm` (Option B), the module is installed under `~/perl5`. You must configure your shell to find it before running the TAP tests:
+
+```bash
+eval $(perl -I ~/perl5/lib/perl5/ -Mlocal::lib)
+```
+
+To make this permanent, add that line to your `~/.zshrc` (or `~/.bashrc`).
+
+**macOS with PostgreSQL built from source:**
+
+If you compiled PostgreSQL from source rather than using Homebrew, the TAP test Perl modules (`PostgreSQL::Test::Cluster`, `PostgreSQL::Test::Utils`) are in the source tree, not in the installed prefix. Point `prove` at them with `-I`:
+
+```bash
+prove -I /path/to/postgres-source/src/test/perl t/*.pl
+```
 
 **Verifying prerequisites:**
 

@@ -8,6 +8,45 @@ PostgreSQL 18 installed at `/opt/postgresql/18.3`.
 - PostgreSQL 18 installed at `/opt/postgresql/18.3`
 - The extension source compiled (see Build step below)
 - Optionally, `pt-query-digest` from Percona Toolkit for format validation
+- For the TAP tests: `IPC::Run` Perl module and the PostgreSQL test Perl modules
+
+### Installing IPC::Run on macOS
+
+The TAP tests require the `IPC::Run` Perl module, which is not included with the macOS system Perl. Install it with one of:
+
+```bash
+# Option A: cpan (installs to system Perl paths, requires sudo)
+sudo cpan IPC::Run
+
+# Option B: cpanm (installs to ~/perl5, no root required)
+brew install cpanminus
+cpanm IPC::Run
+```
+
+If you used `cpanm` (Option B), configure your shell to find the module:
+
+```bash
+eval $(perl -I ~/perl5/lib/perl5/ -Mlocal::lib)
+```
+
+To make this permanent, add that line to your `~/.zshrc`.
+
+### PostgreSQL test Perl modules
+
+The TAP tests use `PostgreSQL::Test::Cluster` and `PostgreSQL::Test::Utils`.
+When PostgreSQL is built from source, these modules live in the source tree
+(not in the installed prefix). Pass the source path to `prove` with `-I`:
+
+```bash
+prove -I /Users/agustin/src/postgres/src/test/perl t/*.pl
+```
+
+Verify all prerequisites:
+
+```bash
+perl -MIPC::Run -e 'print "IPC::Run OK\n"'
+perl -I /Users/agustin/src/postgres/src/test/perl -MPostgreSQL::Test::Cluster -e 'print "PG test modules OK\n"'
+```
 
 ## 1. Build and Install
 
