@@ -547,9 +547,8 @@ peql_ExecutorStart(QueryDesc *queryDesc, int eflags)
 
 	/*
 	 * When active, ensure totaltime instrumentation is allocated so we can
-	 * measure overall execution duration in ExecutorEnd.  We ask for
-	 * INSTRUMENT_ALL to also capture buffer and WAL counters for later
-	 * phases.
+	 * measure overall execution duration in ExecutorEnd.  INSTRUMENT_ALL
+	 * also captures buffer and WAL counters used at full verbosity.
 	 */
 	if (peql_active())
 	{

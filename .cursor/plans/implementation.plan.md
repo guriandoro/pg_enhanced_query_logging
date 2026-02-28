@@ -19,7 +19,7 @@ todos:
     status: completed
   - id: phase6-docs
     content: "Phase 6 - Documentation and polish: Comprehensive README.md with installation, configuration reference, output format specification, pt-query-digest usage examples, architecture notes, and contribution guidelines. Code review pass for comments and clarity."
-    status: pending
+    status: completed
 isProject: false
 ---
 
