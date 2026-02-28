@@ -991,18 +991,24 @@ peql_format_header(StringInfo buf, double duration_ms)
 		fsec_t		fsec;
 		int			tz;
 
-		timestamp2tm(now, &tz, &tm_result, &fsec, NULL, NULL);
-		usec = (int) fsec;
-
-		snprintf(timebuf, sizeof(timebuf),
-				 "%04d-%02d-%02dT%02d:%02d:%02d.%06d",
-				 tm_result.tm_year,
-				 tm_result.tm_mon,
-				 tm_result.tm_mday,
-				 tm_result.tm_hour,
-				 tm_result.tm_min,
-				 tm_result.tm_sec,
-				 usec);
+		if (timestamp2tm(now, &tz, &tm_result, &fsec, NULL, NULL) != 0)
+		{
+			snprintf(timebuf, sizeof(timebuf), "0000-00-00T00:00:00.000000");
+			usec = 0;
+		}
+		else
+		{
+			usec = (int) fsec;
+			snprintf(timebuf, sizeof(timebuf),
+					 "%04d-%02d-%02dT%02d:%02d:%02d.%06d",
+					 tm_result.tm_year,
+					 tm_result.tm_mon,
+					 tm_result.tm_mday,
+					 tm_result.tm_hour,
+					 tm_result.tm_min,
+					 tm_result.tm_sec,
+					 usec);
+		}
 	}
 
 	appendStringInfo(buf, "# Time: %s\n", timebuf);

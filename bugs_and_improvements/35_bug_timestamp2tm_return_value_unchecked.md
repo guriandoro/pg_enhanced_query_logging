@@ -1,6 +1,6 @@
 # Bug: `timestamp2tm` return value not checked in header formatter
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Medium
 
