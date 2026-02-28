@@ -45,33 +45,13 @@ first entry and fails.
 
 ## Location
 
-`t/003_extended_metrics.pl` line 36
+`t/003_extended_metrics.pl` lines 24-43
 
 ## Fix
 
-The test should issue the verbosity change and the reset in the **same psql
-session**, so the reset is also logged at `minimal` verbosity. Alternatively,
-the test can grep only for entries that do NOT contain `pg_enhanced_query_logging_reset`,
-or the reset function should be called first and then the verbosity set in a
-separate session before running the actual test query:
-
-```perl
-$node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
-sleep 1;
-$node->safe_psql('postgres', qq{
-SET peql.log_verbosity = 'minimal';
-SELECT 'minimal_test';
-});
-sleep 1;
-
-my $content = slurp_file($log_file);
-# Filter out the reset entry which is logged at server-default verbosity
-my @minimal_entries = grep { /minimal_test/ } split(/(?=^# Time:)/m, $content);
-unlike(join('', @minimal_entries), qr/^# Thread_id:/m,
-    "minimal: no Thread_id line");
-```
-
-Or more simply, move the verbosity SET into the same session as the reset:
+The verbosity SET and reset are issued in the **same psql session**, so the
+reset entry is also logged at `minimal` verbosity (no `Thread_id`). The same
+pattern is applied to subsequent tests (standard, WAL off, utility off):
 
 ```perl
 $node->safe_psql('postgres', qq{

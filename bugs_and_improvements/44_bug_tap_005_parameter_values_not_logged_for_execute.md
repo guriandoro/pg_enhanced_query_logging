@@ -8,11 +8,10 @@
 
 ## Description
 
-TAP test `t/005_parameter_values.pl` fails 4 out of 5 subtests because the
-`# Parameters:` line never appears in the log when using `PREPARE`/`EXECUTE`
-via `safe_psql`.
+TAP test `t/005_parameter_values.pl` fails because the `# Parameters:` line
+never appears in the log when using `PREPARE`/`EXECUTE` via `safe_psql`.
 
-The test runs:
+The original test runs:
 
 ```sql
 SET peql.log_parameter_values = on;
@@ -53,33 +52,24 @@ ok 5 - log_parameter_values=off: no Parameters line
 
 ## Location
 
-- `t/005_parameter_values.pl` lines 11-34
+- `t/005_parameter_values.pl`
 - `pg_enhanced_query_logging.c`: parameter logging logic in `peql_format_entry`
 
 ## Fix
 
-The test needs to use the **extended query protocol** to send actual bind
-parameters. Options:
-
-1. Use `$node->connect_ok` with a small Perl DBI/DBD::Pg script that calls
-   `prepare` / `execute` with bind values.
-2. Use pgbench with a custom script containing `\set` and `$1`-style parameters.
-3. Use `psql`'s `\bind` meta-command (PG 16+) followed by `\g`:
-
-```sql
-PREPARE param_test (int, text) AS SELECT $1, $2;
-\bind 42 'hello world'
-\g
-```
-
-Option 3 is simplest if targeting PG 16+. Example fix:
+The test uses psql's `\bind` + `\g` meta-commands (PG 16+) to send queries
+through the **extended query protocol**, which populates `queryDesc->params`.
+The `PREPARE`/`EXECUTE` approach was replaced with inline `$1::type` casts
+combined with `\bind`:
 
 ```perl
 my $content = reset_and_get_log($node, query_sql => q{
 SET peql.log_parameter_values = on;
-PREPARE param_test (int, text) AS SELECT \$1, \$2;
-\bind 42 'hello world'
-\g
-DEALLOCATE param_test;
+SELECT $1::int, $2::text \bind 42 'hello world' \g
 });
 ```
+
+The test now has 3 subtests (down from the original 5): parameter values on,
+multiple parameter types, and parameter values off. The NULL parameter test
+was removed since `\bind` does not have a way to send SQL NULL without
+additional workarounds.

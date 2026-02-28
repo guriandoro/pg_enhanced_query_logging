@@ -35,23 +35,18 @@ No subtests run
 
 ## Location
 
-`t/009_session_rate_limit.pl` lines 22-46
+`t/009_session_rate_limit.pl`
 
 ## Fix
 
-Reduce the number of iterations and/or the sleep durations. The test only
-needs a few iterations to verify the all-or-nothing property. For example:
-
-1. Reduce `$sessions` from 20 to 5-8
-2. Reduce the `sleep 1` calls to `sleep 0.5` or remove the pre-query sleep
-   entirely (the reset should be synchronous)
-3. Alternatively, set `$ENV{PG_TEST_TIMEOUT_DEFAULT}` to a higher value at
-   the start of the test
-
-Example:
+Reduced iterations from 20 to 4 and removed all `sleep` calls (the reset
+function and `safe_psql` are synchronous -- the extension writes directly
+via `open`/`write`/`close`, not through the logging collector). Also
+refactored to use `PeqlNode.pm` helpers and added a second subtest
+verifying that `rate_limit=1` with session mode logs everything:
 
 ```perl
-my $sessions = 8;
+my $sessions = 4;
 
 for my $i (1 .. $sessions) {
     $node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
@@ -61,10 +56,12 @@ SELECT 'session_${i}_a';
 SELECT 'session_${i}_b';
 SELECT 'session_${i}_c';
 });
-    sleep 1;
 
     my $log_file = peql_log_path($node);
-    my $content = -f $log_file ? slurp_file($log_file) : '';
+    my $content = '';
+    if (-f $log_file) {
+        eval { $content = slurp_file($log_file); };
+    }
     # ... check all-or-nothing ...
 }
 ```

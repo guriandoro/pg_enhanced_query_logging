@@ -17,14 +17,15 @@ in the plan tree. Instead, PostgreSQL uses a `CteScan` node that reads from a
 TAP test `t/010_edge_cases.pl` test 2 verifies:
 
 ```perl
-# WITH big AS MATERIALIZED (SELECT generate_series(1, 100000) AS n)
+# SET work_mem = '64kB';
+# WITH big AS MATERIALIZED (SELECT generate_series(1, 10000) AS n)
 #   SELECT count(*) FROM big;
 like($content, qr/Temp_table: Yes/,
     "materialized CTE triggers Temp_table: Yes");
 ```
 
-The test fails because the plan tree contains no `MaterialState` node, so
-`Temp_table: No` is reported. Meanwhile `Temp_table_on_disk: Yes` is
+The test failed because the plan tree contained no `MaterialState` node, so
+`Temp_table: No` was reported. Meanwhile `Temp_table_on_disk: Yes` was
 correctly detected because that flag is derived from `temp_blks_written > 0`
 (buffer-level accounting), not from plan node inspection.
 
@@ -39,12 +40,12 @@ not ok 2 - materialized CTE triggers Temp_table: Yes
 
 ## Location
 
-- `pg_enhanced_query_logging.c`: `peql_plan_walker` around line 950
-- `t/010_edge_cases.pl` line 29
+- `pg_enhanced_query_logging.c`: `peql_plan_walker` line 950
+- `t/010_edge_cases.pl` test 2
 
 ## Fix
 
-Extend the plan tree walker to also detect `CteScanState` nodes as temp
+Extended the plan tree walker to also detect `CteScanState` nodes as temp
 table usage. A CTE scan always materializes its subquery results into a
 tuplestore, which is conceptually equivalent to a temp table:
 
@@ -55,7 +56,6 @@ if (IsA(planstate, MaterialState) || IsA(planstate, CteScanState))
 }
 ```
 
-Alternatively, the test could be adjusted to use a query that genuinely
-produces a `MaterialState` node, such as a subquery with `DISTINCT` or
-a nested loop with a materializing inner side. However, detecting CTE
-materialization is arguably the correct behavior for `Temp_table`.
+The test also sets `work_mem = '64kB'` and uses 10,000 rows (instead of
+100,000) to keep the test fast while still exercising the CTE materialization
+path.

@@ -62,17 +62,14 @@ not ok 4 - track_memory=off: Mem_allocated field absent
 
 ## Location
 
-- `t/010_edge_cases.pl` lines 42-49
+- `t/010_edge_cases.pl` test 4
 - `t/PeqlNode.pm`: `reset_and_get_log()` function
 
 ## Fix
 
 Same pattern as bug #43: the reset call is logged at the server-default
-verbosity/settings. The test should either:
-
-1. Filter out the reset entry before asserting, or
-2. Issue the reset and the `SET peql.track_memory = off` in the same
-   session so the reset is also logged without `Mem_allocated`:
+settings (`track_memory = on`). The test filters out the reset entry before
+asserting:
 
 ```perl
 $content = reset_and_get_log($node, query_sql => q{
@@ -81,7 +78,7 @@ SET peql.track_memory = off;
 SELECT generate_series(1, 100);
 });
 
-# Only check entries that are NOT the reset call
+# Filter out the reset entry (logged at server-default track_memory=on)
 my @non_reset = grep { !/pg_enhanced_query_logging_reset/ }
     split(/(?=^# Time:)/m, $content);
 unlike(join('', @non_reset), qr/Mem_allocated:/,
