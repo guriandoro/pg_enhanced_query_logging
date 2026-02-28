@@ -22,7 +22,12 @@ my $data_dir = $node->data_dir;
 my $log_file = "$data_dir/log/peql-slow.log";
 
 # ── Test 1: minimal verbosity - no Thread_id or buffer metrics ──
-$node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
+# Reset and set verbosity in the same session so the reset entry itself
+# is also logged at minimal verbosity (avoids Thread_id from a full entry).
+$node->safe_psql('postgres', qq{
+SET peql.log_verbosity = 'minimal';
+SELECT pg_enhanced_query_logging_reset();
+});
 $node->safe_psql('postgres', qq{
 SET peql.log_verbosity = 'minimal';
 SELECT 'minimal_test';
@@ -39,7 +44,10 @@ unlike($content, qr/^# Shared_blks_hit:/m,
 	"minimal: no buffer metrics");
 
 # ── Test 2: standard verbosity - Thread_id and Schema present ──
-$node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
+$node->safe_psql('postgres', qq{
+SET peql.log_verbosity = 'standard';
+SELECT pg_enhanced_query_logging_reset();
+});
 $node->safe_psql('postgres', qq{
 SET peql.log_verbosity = 'standard';
 SELECT 'standard_test';
@@ -75,7 +83,11 @@ like($content, qr/^# WAL_records: \d+\s+WAL_bytes: \d+\s+WAL_fpi: \d+/m,
 	"full: WAL metrics present with track_wal=on");
 
 # ── Test 5: WAL metrics disappear when track_wal is off ──
-$node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
+$node->safe_psql('postgres', qq{
+SET peql.log_verbosity = 'full';
+SET peql.track_wal = off;
+SELECT pg_enhanced_query_logging_reset();
+});
 $node->safe_psql('postgres', qq{
 SET peql.log_verbosity = 'full';
 SET peql.track_wal = off;
@@ -99,7 +111,10 @@ like($content, qr/CREATE TABLE/,
 	"utility: DDL statement appears when log_utility=on");
 
 # ── Test 7: utility not logged when peql.log_utility is off ──
-$node->safe_psql('postgres', "SELECT pg_enhanced_query_logging_reset()");
+$node->safe_psql('postgres', qq{
+SET peql.log_utility = off;
+SELECT pg_enhanced_query_logging_reset();
+});
 $node->safe_psql('postgres', qq{
 SET peql.log_utility = off;
 CREATE TABLE IF NOT EXISTS utility_test2 (id int);
