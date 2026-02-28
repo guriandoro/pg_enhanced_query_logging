@@ -947,7 +947,7 @@ peql_plan_walker(PlanState *planstate, void *context)
 		}
 	}
 
-	if (IsA(planstate, MaterialState))
+	if (IsA(planstate, MaterialState) || IsA(planstate, CteScanState))
 	{
 		m->has_temp_table = true;
 		/* Temp_table_on_disk is inferred from temp_blks_written > 0. */
