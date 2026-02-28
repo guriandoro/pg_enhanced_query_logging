@@ -180,8 +180,11 @@ typedef struct PeqlPlanMetrics
 
 /* ---------- Hook infrastructure ------------------------------------------ */
 
-/* Nesting depth -- incremented around ExecutorRun/Finish calls. */
+/* Nesting depth -- incremented around executor and utility calls. */
 static int nesting_level = 0;
+
+/* Separate nesting depth for the planner hook to avoid conflation. */
+static int planner_nesting_level = 0;
 
 /*
  * Convenience macro: the extension is "active" when it is enabled, the
@@ -506,7 +509,7 @@ peql_planner(Query *parse, const char *query_string,
 
 	INSTR_TIME_SET_CURRENT(start);
 
-	nesting_level++;
+	planner_nesting_level++;
 	PG_TRY();
 	{
 		if (prev_planner)
@@ -518,7 +521,7 @@ peql_planner(Query *parse, const char *query_string,
 	}
 	PG_FINALLY();
 	{
-		nesting_level--;
+		planner_nesting_level--;
 	}
 	PG_END_TRY();
 

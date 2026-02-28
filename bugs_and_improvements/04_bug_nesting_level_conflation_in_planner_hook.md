@@ -1,6 +1,6 @@
 # Bug: nesting_level incremented in planner hook conflates plan vs. execution nesting
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Medium
 
