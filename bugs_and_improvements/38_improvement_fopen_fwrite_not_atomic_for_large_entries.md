@@ -1,6 +1,6 @@
 # Improvement: `fopen("a")` + `fwrite` is not atomic for large log entries
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Low
 

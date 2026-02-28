@@ -23,6 +23,7 @@
  */
 #include "postgres.h"
 
+#include <fcntl.h>
 #include <limits.h>
 #include <math.h>
 #include <sys/stat.h>
@@ -32,6 +33,7 @@
 #include "commands/explain.h"
 #include "commands/explain_format.h"
 #include "commands/explain_state.h"
+#include "common/file_perm.h"
 #include "common/pg_prng.h"
 #include "executor/executor.h"
 #include "executor/instrument.h"
@@ -1372,16 +1374,15 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
  * ──────────────────────────────────────────────────────────────────────────
  * File writer
  *
- * Appends pre-formatted data to the slow query log file.  Uses raw
- * fopen/fclose instead of AllocateFile/FreeFile because this runs from
- * ExecutorEnd where the ResourceOwner may be in an unusual state (e.g.
- * during transaction abort or backend exit).  Since we open, write, and
- * close within a single call, resource tracking is unnecessary.
+ * Appends pre-formatted data to the slow query log file.  Uses POSIX
+ * open/write/close with O_APPEND instead of stdio fopen/fwrite/fclose
+ * to guarantee a single atomic write(2) syscall per entry.  This avoids
+ * interleaving when multiple backends write concurrently and the entry
+ * exceeds the stdio buffer size.
  *
- * Each call opens the file, writes, and closes.  This is safe for
- * concurrent backends because O_APPEND ensures atomic writes on POSIX
- * when the data fits in PIPE_BUF (typically 4-64 KB, well above a
- * single log entry).
+ * This runs from ExecutorEnd where the ResourceOwner may be in an
+ * unusual state (e.g. during transaction abort or backend exit), so we
+ * use raw syscalls instead of AllocateFile/FreeFile.
  * ──────────────────────────────────────────────────────────────────────────
  */
 static void
@@ -1390,12 +1391,12 @@ peql_flush_to_file(const char *data, int len)
 	char	logpath[MAXPGPATH];
 	char	dirpath[MAXPGPATH];
 	char   *slash;
-	FILE   *fp;
+	int		fd;
 
 	peql_resolve_log_path(logpath, sizeof(logpath));
 
-	fp = fopen(logpath, "a");
-	if (fp == NULL)
+	fd = open(logpath, O_WRONLY | O_APPEND | O_CREAT, pg_file_create_mode);
+	if (fd < 0)
 	{
 		/*
 		 * If the directory doesn't exist, try to create it and retry.
@@ -1403,15 +1404,14 @@ peql_flush_to_file(const char *data, int len)
 		 */
 		strlcpy(dirpath, logpath, sizeof(dirpath));
 
-		/* Trim the filename component to get the directory. */
 		slash = strrchr(dirpath, '/');
 		if (slash)
 			*slash = '\0';
 
 		(void) MakePGDirectory(dirpath);
 
-		fp = fopen(logpath, "a");
-		if (fp == NULL)
+		fd = open(logpath, O_WRONLY | O_APPEND | O_CREAT, pg_file_create_mode);
+		if (fd < 0)
 		{
 			ereport(LOG,
 					(errcode_for_file_access(),
@@ -1422,16 +1422,16 @@ peql_flush_to_file(const char *data, int len)
 	}
 
 	{
-		size_t written = fwrite(data, 1, len, fp);
-		if (written != (size_t) len)
+		ssize_t written = write(fd, data, len);
+		if (written != (ssize_t) len)
 		{
 			ereport(LOG,
 					(errcode_for_file_access(),
-					 errmsg("peql: short write to \"%s\": wrote " UINT64_FORMAT " of %d bytes",
-							logpath, (uint64) written, len)));
+					 errmsg("peql: short write to \"%s\": wrote %zd of %d bytes",
+							logpath, written, len)));
 		}
 	}
-	fclose(fp);
+	close(fd);
 }
 
 /*
