@@ -41,12 +41,76 @@ When PostgreSQL is built from source, these modules live in the source tree
 prove -I /Users/agustin/src/postgres/src/test/perl t/*.pl
 ```
 
-Verify all prerequisites:
+**Important:** The source tree version must match the installed PostgreSQL
+binaries. If the installed version is 18.3, checkout `REL_18_3` in the
+source tree before running the tests. A version mismatch (e.g., development
+HEAD vs release binaries) can cause API incompatibilities in the test Perl
+modules that manifest as cryptic errors like
+`Use of uninitialized value $_[0] in join or string`.
+
+```bash
+cd /Users/agustin/src/postgres
+git checkout REL_18_3
+```
+
+### PG_REGRESS environment variable
+
+The `PostgreSQL::Test::Cluster` module requires the `PG_REGRESS`
+environment variable to point to the `pg_regress` binary. This is set
+automatically when running tests via `make`, but must be set manually
+when using `prove` directly:
+
+```bash
+export PG_REGRESS=/opt/postgresql/18.3/lib/pgxs/src/test/regress/pg_regress
+```
+
+Without this, tests will fail during `$node->init` with
+`Use of uninitialized value` errors.
+
+### Verify all prerequisites
 
 ```bash
 perl -MIPC::Run -e 'print "IPC::Run OK\n"'
 perl -I /Users/agustin/src/postgres/src/test/perl -MPostgreSQL::Test::Cluster -e 'print "PG test modules OK\n"'
 ```
+
+### Running the TAP tests
+
+The complete command with all required environment variables:
+
+```bash
+# Set up the environment
+eval $(perl -I ~/perl5/lib/perl5/ -Mlocal::lib)  # only if IPC::Run installed via cpanm
+export PATH=/opt/postgresql/18.3/bin:$PATH
+export PG_REGRESS=/opt/postgresql/18.3/lib/pgxs/src/test/regress/pg_regress
+
+# Run all TAP tests
+prove -v -I /Users/agustin/src/postgres/src/test/perl t/*.pl
+```
+
+### Troubleshooting
+
+**Stale `tmp_check` directory:** If a previous test run crashed or was
+interrupted, `prove` leaves behind a `tmp_check/` directory containing the
+test cluster data. Subsequent runs will fail with
+`could not create data directory ... File exists`. Remove it before
+retrying:
+
+```bash
+rm -rf tmp_check
+```
+
+**`Use of uninitialized value $_[0]` during `$node->init`:** This usually
+means `PG_REGRESS` is not set. See [PG_REGRESS environment variable](#pg_regress-environment-variable) above.
+
+**`Can't locate IPC/Run.pm`:** The `IPC::Run` Perl module is not
+installed or not in Perl's `@INC` path. See [Installing IPC::Run on macOS](#installing-ipcrun-on-macos).
+
+**`02_guc` SQL regression test fails:** The test expects default `peql.*`
+GUC values. If you have customized any `peql.*` settings in
+`postgresql.conf`, the `SHOW` output will not match `expected/02_guc.out`.
+Run against a server with default settings, or focus on the TAP tests which
+create isolated instances.
 
 ## 1. Build and Install
 
@@ -669,6 +733,15 @@ levels, buffer/WAL metrics, utility logging, and row count accuracy:
 ```bash
 make prove_installcheck USE_PGXS=1 PG_CONFIG=/opt/postgresql/18.3/bin/pg_config
 ```
+
+Or run `prove` directly (required when PostgreSQL is built from source):
+
+```bash
+export PG_REGRESS=/opt/postgresql/18.3/lib/pgxs/src/test/regress/pg_regress
+prove -v -I /Users/agustin/src/postgres/src/test/perl t/*.pl
+```
+
+See the [Prerequisites](#prerequisites) section for required environment setup.
 
 Test files:
 - `t/001_basic_logging.pl` -- log file creation, pt-query-digest format, reset function, enable/disable

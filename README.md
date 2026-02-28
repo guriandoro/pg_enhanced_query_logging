@@ -466,9 +466,24 @@ To make this permanent, add that line to your `~/.zshrc` (or `~/.bashrc`).
 
 **macOS with PostgreSQL built from source:**
 
-If you compiled PostgreSQL from source rather than using Homebrew, the TAP test Perl modules (`PostgreSQL::Test::Cluster`, `PostgreSQL::Test::Utils`) are in the source tree, not in the installed prefix. Point `prove` at them with `-I`:
+If you compiled PostgreSQL from source rather than using Homebrew, the TAP test Perl modules (`PostgreSQL::Test::Cluster`, `PostgreSQL::Test::Utils`) are in the source tree, not in the installed prefix. You need to:
+
+1. **Match the source tree tag to the installed version.** For example, if you installed PostgreSQL 18.3, checkout `REL_18_3` in the source tree. A version mismatch causes API incompatibilities in the test Perl modules.
+
+2. **Set the `PG_REGRESS` environment variable** to the `pg_regress` binary installed with PostgreSQL. The test Perl modules require this and will fail with cryptic errors if it is not set.
+
+3. **Point `prove` at the source tree** with `-I`.
 
 ```bash
+# Ensure source tree matches installed version
+cd /path/to/postgres-source
+git checkout REL_18_3  # match your installed version
+
+# Set required environment variables
+export PATH=/path/to/pg-install/bin:$PATH
+export PG_REGRESS=/path/to/pg-install/lib/pgxs/src/test/regress/pg_regress
+
+# Run TAP tests
 prove -I /path/to/postgres-source/src/test/perl t/*.pl
 ```
 
@@ -524,6 +539,18 @@ make installcheck USE_PGXS=1 PG_CONFIG=/path/to/pg_config
 make prove_installcheck USE_PGXS=1 PG_CONFIG=/path/to/pg_config
 ```
 
+**If you built PostgreSQL from source** and `make prove_installcheck` does
+not work, run `prove` directly with the required environment:
+
+```bash
+export PATH=/path/to/pg-install/bin:$PATH
+export PG_REGRESS=/path/to/pg-install/lib/pgxs/src/test/regress/pg_regress
+prove -v -I /path/to/postgres-source/src/test/perl t/*.pl
+```
+
+See [Prerequisites](#prerequisites) for details on `IPC::Run`, source tree
+version matching, and `PG_REGRESS`.
+
 ### SQL Regression Tests
 
 Three tests in `sql/` validate core SQL behavior:
@@ -535,6 +562,8 @@ Three tests in `sql/` validate core SQL behavior:
 | `03_filtering` | Statement filtering behavior |
 
 Expected output files live in `expected/`. A failing test produces `regression.diffs` with the mismatch.
+
+**Note:** The `02_guc` test checks GUC default values via `SHOW`. It expects the server to be running with default `peql.*` settings. If you have customized `peql.*` values in `postgresql.conf` (e.g., `peql.log_min_duration = 0`), the test will fail because the `SHOW` output won't match the expected defaults. Run `installcheck` against a server with no custom `peql.*` configuration, or use the TAP tests which spin up their own isolated instances.
 
 ### TAP Tests
 
