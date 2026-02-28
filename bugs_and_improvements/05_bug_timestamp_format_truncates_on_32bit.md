@@ -1,6 +1,6 @@
 # Bug: `%ld` for SET timestamp truncates on 32-bit / Windows platforms
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Medium
 
