@@ -25,6 +25,19 @@ The extension hooks into the executor pipeline to capture timing, buffer I/O, WA
 - C compiler and `pg_config` in your `PATH` (or specified explicitly)
 - Optional: [Percona Toolkit](https://docs.percona.com/percona-toolkit/) for `pt-query-digest`
 
+### Installing pt-query-digest
+
+If you don't have `pt-query-digest` installed, you can grab the standalone script:
+
+```bash
+cd ~/.local/bin
+curl -LO https://percona.com/get/pt-query-digest
+chmod +x pt-query-digest
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+To make the `PATH` change permanent, add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.).
+
 ## Installation
 
 ### Building from Source
