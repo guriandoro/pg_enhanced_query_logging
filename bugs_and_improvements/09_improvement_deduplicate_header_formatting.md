@@ -1,6 +1,6 @@
 # Improvement: Deduplicate header formatting between query and utility entries
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Low
 

@@ -248,6 +248,9 @@ static void peql_collect_plan_metrics(QueryDesc *queryDesc,
 /* Parameter formatting helper. */
 static void peql_append_params(StringInfo buf, ParamListInfo params);
 
+/* Common header formatting (Time, User@Host, timestamp computation). */
+static pg_time_t peql_format_header(StringInfo buf, double duration_ms);
+
 /* SQL-callable reset function. */
 PG_FUNCTION_INFO_V1(pg_enhanced_query_logging_reset);
 
@@ -955,71 +958,30 @@ peql_collect_plan_metrics(QueryDesc *queryDesc, PeqlPlanMetrics *metrics)
 
 /*
  * ──────────────────────────────────────────────────────────────────────────
- * Log entry formatter
+ * Common header formatter
  *
- * Builds a pt-query-digest-compatible slow log entry into the provided
- * StringInfo buffer.  The format mirrors the MySQL slow query log so that
- * pt-query-digest --type slowlog can parse it directly.
- *
- * Minimum output (all verbosity levels):
- *   # Time: <ISO-8601>
- *   # User@Host: user[user] @ host []
- *   # Query_time: N.NNNNNN  Lock_time: 0.000000  Rows_sent: N  Rows_examined: N
- *   SET timestamp=N;
- *   <query text>;
- *
- * Standard verbosity adds: Thread_id, Schema (db.schema), Rows_affected
- *
- * Full verbosity adds: buffer/WAL/JIT metrics, plan quality booleans,
- *   planning time, memory usage
+ * Emits the # Time: and # User@Host: lines shared by both query and
+ * utility entry formatters. Returns stamp_time for SET timestamp.
  * ──────────────────────────────────────────────────────────────────────────
  */
-static void
-peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
+static pg_time_t
+peql_format_header(StringInfo buf, double duration_ms)
 {
 	TimestampTz	now;
 	pg_time_t	stamp_time;
 	char		timebuf[128];
 	int			usec;
-
 	const char *user  = NULL;
 	const char *host  = NULL;
-	const char *db    = NULL;
-	uint64		rows_processed;
-	double		duration_sec;
-	const char *query_text;
 
-	Instrumentation *instr;
-	PeqlPlanMetrics	plan_metrics;
-	bool			have_plan_metrics = false;
-
-	/* ---- Gather connection metadata ---- */
 	if (MyProcPort)
 	{
 		user = MyProcPort->user_name;
 		host = MyProcPort->remote_host;
-		db   = MyProcPort->database_name;
 	}
 	if (user == NULL) user = "";
 	if (host == NULL) host = "";
-	if (db == NULL)   db   = "";
 
-	instr = queryDesc->totaltime;
-	rows_processed = queryDesc->estate->es_processed;
-	duration_sec   = duration_ms / 1000.0;
-	query_text = queryDesc->sourceText ? queryDesc->sourceText : "";
-
-	/*
-	 * Collect plan-tree metrics when full verbosity is enabled.  We do
-	 * this before finalizing the format so the data is available.
-	 */
-	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_FULL && queryDesc->planstate)
-	{
-		peql_collect_plan_metrics(queryDesc, &plan_metrics);
-		have_plan_metrics = true;
-	}
-
-	/* ---- # Time: line ---- */
 	now = GetCurrentTimestamp();
 	stamp_time = timestamptz_to_time_t(now);
 
@@ -1043,9 +1005,66 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 	}
 
 	appendStringInfo(buf, "# Time: %s\n", timebuf);
-
-	/* ---- # User@Host: line ---- */
 	appendStringInfo(buf, "# User@Host: %s[%s] @ %s []\n", user, user, host);
+
+	return stamp_time;
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
+ * Log entry formatter
+ *
+ * Builds a pt-query-digest-compatible slow log entry into the provided
+ * StringInfo buffer.  The format mirrors the MySQL slow query log so that
+ * pt-query-digest --type slowlog can parse it directly.
+ *
+ * Minimum output (all verbosity levels):
+ *   # Time: <ISO-8601>
+ *   # User@Host: user[user] @ host []
+ *   # Query_time: N.NNNNNN  Lock_time: 0.000000  Rows_sent: N  Rows_examined: N
+ *   SET timestamp=N;
+ *   <query text>;
+ *
+ * Standard verbosity adds: Thread_id, Schema (db.schema), Rows_affected
+ *
+ * Full verbosity adds: buffer/WAL/JIT metrics, plan quality booleans,
+ *   planning time, memory usage
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static void
+peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
+{
+	pg_time_t	stamp_time;
+	const char *db    = NULL;
+	uint64		rows_processed;
+	double		duration_sec;
+	const char *query_text;
+
+	Instrumentation *instr;
+	PeqlPlanMetrics	plan_metrics;
+	bool			have_plan_metrics = false;
+
+	if (MyProcPort)
+		db = MyProcPort->database_name;
+	if (db == NULL) db = "";
+
+	instr = queryDesc->totaltime;
+	rows_processed = queryDesc->estate->es_processed;
+	duration_sec   = duration_ms / 1000.0;
+	query_text = queryDesc->sourceText ? queryDesc->sourceText : "";
+
+	/*
+	 * Collect plan-tree metrics when full verbosity is enabled.  We do
+	 * this before finalizing the format so the data is available.
+	 */
+	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_FULL && queryDesc->planstate)
+	{
+		peql_collect_plan_metrics(queryDesc, &plan_metrics);
+		have_plan_metrics = true;
+	}
+
+	/* ---- Common header: # Time: and # User@Host: ---- */
+	stamp_time = peql_format_header(buf, duration_ms);
 
 	/*
 	 * ---- Standard verbosity: Thread_id, Schema (db.schema) ----
@@ -1492,51 +1511,18 @@ static void
 peql_format_utility_entry(StringInfo buf, const char *queryString,
 						  double duration_ms, ParamListInfo params)
 {
-	TimestampTz	now;
 	pg_time_t	stamp_time;
-	char		timebuf[128];
-	int			usec;
-	const char *user  = NULL;
-	const char *host  = NULL;
 	const char *db    = NULL;
 	double		duration_sec;
 
 	if (MyProcPort)
-	{
-		user = MyProcPort->user_name;
-		host = MyProcPort->remote_host;
-		db   = MyProcPort->database_name;
-	}
-	if (user == NULL) user = "";
-	if (host == NULL) host = "";
-	if (db == NULL)   db   = "";
+		db = MyProcPort->database_name;
+	if (db == NULL) db = "";
 
 	duration_sec = duration_ms / 1000.0;
 
-	now = GetCurrentTimestamp();
-	stamp_time = timestamptz_to_time_t(now);
-
-	{
-		struct pg_tm tm_result;
-		fsec_t		fsec;
-		int			tz;
-
-		timestamp2tm(now, &tz, &tm_result, &fsec, NULL, NULL);
-		usec = (int) fsec;
-
-		snprintf(timebuf, sizeof(timebuf),
-				 "%04d-%02d-%02dT%02d:%02d:%02d.%06d",
-				 tm_result.tm_year,
-				 tm_result.tm_mon,
-				 tm_result.tm_mday,
-				 tm_result.tm_hour,
-				 tm_result.tm_min,
-				 tm_result.tm_sec,
-				 usec);
-	}
-
-	appendStringInfo(buf, "# Time: %s\n", timebuf);
-	appendStringInfo(buf, "# User@Host: %s[%s] @ %s []\n", user, user, host);
+	/* ---- Common header: # Time: and # User@Host: ---- */
+	stamp_time = peql_format_header(buf, duration_ms);
 
 	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_STANDARD)
 	{
