@@ -55,7 +55,7 @@
 
 PG_MODULE_MAGIC_EXT(
 	.name = "pg_enhanced_query_logging",
-	.version = "1.0"
+	.version = "1.1"
 );
 
 /* ---------- GUC variables ------------------------------------------------ */

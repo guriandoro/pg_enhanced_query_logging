@@ -9,7 +9,9 @@ OBJS = \
 PGFILEDESC = "pg_enhanced_query_logging - enhanced query logging for pt-query-digest"
 
 EXTENSION = pg_enhanced_query_logging
-DATA = pg_enhanced_query_logging--1.0.sql
+DATA = pg_enhanced_query_logging--1.0.sql \
+	pg_enhanced_query_logging--1.1.sql \
+	pg_enhanced_query_logging--1.0--1.1.sql
 
 REGRESS = 01_basic 02_guc 03_filtering
 
