@@ -251,6 +251,22 @@ static void peql_append_params(StringInfo buf, ParamListInfo params);
 PG_FUNCTION_INFO_V1(pg_enhanced_query_logging_reset);
 
 /*
+ * GUC assign hooks: reset session sampling decision when rate-limit
+ * parameters change, so the new value takes effect immediately.
+ */
+static void
+peql_rate_limit_assign(int newval, void *extra)
+{
+	peql_session_decided = false;
+}
+
+static void
+peql_rate_limit_type_assign(int newval, void *extra)
+{
+	peql_session_decided = false;
+}
+
+/*
  * ──────────────────────────────────────────────────────────────────────────
  * Module load callback
  *
@@ -347,7 +363,7 @@ _PG_init(void)
 							1, INT_MAX,
 							PGC_SUSET,
 							0,
-							NULL, NULL, NULL);
+							NULL, peql_rate_limit_assign, NULL);
 
 	/* ---- GUC: peql.rate_limit_type ---- */
 	DefineCustomEnumVariable("peql.rate_limit_type",
@@ -359,7 +375,7 @@ _PG_init(void)
 							 rate_limit_type_options,
 							 PGC_SUSET,
 							 0,
-							 NULL, NULL, NULL);
+							 NULL, peql_rate_limit_type_assign, NULL);
 
 	/* ---- GUC: peql.rate_limit_always_log_duration ---- */
 	DefineCustomIntVariable("peql.rate_limit_always_log_duration",

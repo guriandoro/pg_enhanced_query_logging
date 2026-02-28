@@ -1,6 +1,6 @@
 # Bug: Session rate limit decision is never recalculated when GUC changes
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Medium
 
