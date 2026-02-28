@@ -1,6 +1,6 @@
 # Improvement: Detect and warn on fwrite short writes
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Low
 

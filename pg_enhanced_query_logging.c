@@ -1356,7 +1356,16 @@ peql_flush_to_file(const char *data, int len)
 		}
 	}
 
-	(void) fwrite(data, 1, len, fp);
+	{
+		size_t written = fwrite(data, 1, len, fp);
+		if (written != (size_t) len)
+		{
+			ereport(LOG,
+					(errcode_for_file_access(),
+					 errmsg("peql: short write to \"%s\": wrote " UINT64_FORMAT " of %d bytes",
+							logpath, (uint64) written, len)));
+		}
+	}
 	FreeFile(fp);
 }
 
