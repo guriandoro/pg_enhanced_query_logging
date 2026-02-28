@@ -1,6 +1,6 @@
 # Improvement: No-op `poll_query_until` masquerades as a synchronisation wait
 
-## Status: Open
+## Status: Fixed
 
 ## Priority: Low
 
