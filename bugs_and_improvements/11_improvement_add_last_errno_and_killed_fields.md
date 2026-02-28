@@ -1,6 +1,6 @@
 # Improvement: Add `Last_errno` and `Killed` fields per the output spec
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Low
 

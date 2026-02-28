@@ -1069,10 +1069,10 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 		}
 
 		if (schema_name)
-			appendStringInfo(buf, "# Thread_id: %d  Schema: %s.%s\n",
+			appendStringInfo(buf, "# Thread_id: %d  Schema: %s.%s  Last_errno: 0  Killed: 0\n",
 							 MyProcPid, db, schema_name);
 		else
-			appendStringInfo(buf, "# Thread_id: %d  Schema: %s\n",
+			appendStringInfo(buf, "# Thread_id: %d  Schema: %s  Last_errno: 0  Killed: 0\n",
 							 MyProcPid, db);
 	}
 
@@ -1522,7 +1522,7 @@ peql_format_utility_entry(StringInfo buf, const char *queryString,
 
 	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_STANDARD)
 	{
-		appendStringInfo(buf, "# Thread_id: %d  Schema: %s\n",
+		appendStringInfo(buf, "# Thread_id: %d  Schema: %s  Last_errno: 0  Killed: 0\n",
 						 MyProcPid, db);
 	}
 
