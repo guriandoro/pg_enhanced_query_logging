@@ -1,6 +1,6 @@
 # Improvement: Extension marked `relocatable = true` but should not be
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Low
 

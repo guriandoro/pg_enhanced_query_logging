@@ -2,4 +2,4 @@
 comment = 'enhanced query logging compatible with pt-query-digest'
 default_version = '1.0'
 module_pathname = '$libdir/pg_enhanced_query_logging'
-relocatable = true
+relocatable = false
