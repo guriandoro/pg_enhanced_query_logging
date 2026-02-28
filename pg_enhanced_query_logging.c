@@ -28,6 +28,10 @@
 #include <unistd.h>
 
 #include "catalog/namespace.h"
+#include "commands/explain.h"
+#include "commands/explain_format.h"
+#include "commands/explain_state.h"
+#include "common/pg_prng.h"
 #include "executor/executor.h"
 #include "executor/instrument.h"
 #include "fmgr.h"
@@ -36,10 +40,12 @@
 #include "libpq/libpq-be.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
+#include "nodes/params.h"
 #include "optimizer/planner.h"
 #include "pgtime.h"
 #include "postmaster/syslogger.h"
 #include "storage/fd.h"
+#include "tcop/utility.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -94,6 +100,45 @@ static bool peql_log_utility = false;
 /* Whether to log nested statements (e.g. inside PL/pgSQL functions). */
 static bool peql_log_nested = false;
 
+/* Rate limiting: log every Nth query or session (1 = log all). */
+static int peql_rate_limit = 1;
+
+/* Rate limiting mode. */
+typedef enum
+{
+	PEQL_RATE_LIMIT_SESSION = 0,
+	PEQL_RATE_LIMIT_QUERY
+} PeqlRateLimitType;
+
+static const struct config_enum_entry rate_limit_type_options[] = {
+	{"session", PEQL_RATE_LIMIT_SESSION, false},
+	{"query", PEQL_RATE_LIMIT_QUERY, false},
+	{NULL, 0, false}
+};
+
+static int peql_rate_limit_type = PEQL_RATE_LIMIT_QUERY;
+
+/*
+ * Duration threshold (ms) that always bypasses the rate limiter.
+ * Queries slower than this are always logged regardless of sampling.
+ */
+static int peql_rate_limit_always_log_duration = 10000;
+
+/* Log bind parameter values in the log entry. */
+static bool peql_log_parameter_values = false;
+
+/* Include EXPLAIN output in the log entry. */
+static bool peql_log_query_plan = false;
+
+/* EXPLAIN output format. */
+static const struct config_enum_entry query_plan_format_options[] = {
+	{"text", EXPLAIN_FORMAT_TEXT, false},
+	{"json", EXPLAIN_FORMAT_JSON, false},
+	{NULL, 0, false}
+};
+
+static int peql_log_query_plan_format = EXPLAIN_FORMAT_TEXT;
+
 /* Track block read/write times (requires PostgreSQL track_io_timing). */
 static bool peql_track_io_timing = true;
 
@@ -105,6 +150,16 @@ static bool peql_track_memory = false;
 
 /* Track planning time separately from execution time. */
 static bool peql_track_planning = false;
+
+/* ---------- Rate limiting state ----------------------------------------- */
+
+/*
+ * Session-mode rate limiting: decided once at backend startup.
+ * peql_session_is_sampled is true if this backend was selected for logging.
+ * Initialised on first use via peql_session_decided flag.
+ */
+static bool peql_session_decided = false;
+static bool peql_session_is_sampled = false;
 
 /* ---------- Per-query planning time (set by planner hook) ---------------- */
 static double peql_current_plan_time_ms = 0.0;
@@ -138,11 +193,12 @@ static int nesting_level = 0;
 	 (nesting_level == 0 || peql_log_nested))
 
 /* Saved previous hook values so we can chain properly. */
-static planner_hook_type       prev_planner       = NULL;
-static ExecutorStart_hook_type  prev_ExecutorStart  = NULL;
-static ExecutorRun_hook_type    prev_ExecutorRun    = NULL;
-static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
-static ExecutorEnd_hook_type    prev_ExecutorEnd    = NULL;
+static planner_hook_type            prev_planner         = NULL;
+static ExecutorStart_hook_type      prev_ExecutorStart   = NULL;
+static ExecutorRun_hook_type        prev_ExecutorRun     = NULL;
+static ExecutorFinish_hook_type     prev_ExecutorFinish  = NULL;
+static ExecutorEnd_hook_type        prev_ExecutorEnd     = NULL;
+static ProcessUtility_hook_type     prev_ProcessUtility  = NULL;
 
 /* Forward declarations for hook functions. */
 static PlannedStmt *peql_planner(Query *parse, const char *query_string,
@@ -154,18 +210,39 @@ static void peql_ExecutorRun(QueryDesc *queryDesc,
 							 uint64 count);
 static void peql_ExecutorFinish(QueryDesc *queryDesc);
 static void peql_ExecutorEnd(QueryDesc *queryDesc);
+static void peql_ProcessUtility(PlannedStmt *pstmt,
+								const char *queryString,
+								bool readOnlyTree,
+								ProcessUtilityContext context,
+								ParamListInfo params,
+								QueryEnvironment *queryEnv,
+								DestReceiver *dest,
+								QueryCompletion *qc);
 
 /* Forward declarations for log formatting and file I/O. */
 static void peql_write_log_entry(QueryDesc *queryDesc, double duration_ms);
+static void peql_write_utility_log_entry(const char *queryString,
+										 double duration_ms,
+										 ParamListInfo params);
 static void peql_resolve_log_path(char *result, size_t resultsize);
 static void peql_format_entry(StringInfo buf, QueryDesc *queryDesc,
 							  double duration_ms);
+static void peql_format_utility_entry(StringInfo buf,
+									  const char *queryString,
+									  double duration_ms,
+									  ParamListInfo params);
 static void peql_flush_to_file(const char *data, int len);
+
+/* Rate limiting. */
+static bool peql_should_log(double duration_ms);
 
 /* Plan-tree analysis. */
 static bool peql_plan_walker(PlanState *planstate, void *context);
 static void peql_collect_plan_metrics(QueryDesc *queryDesc,
 									  PeqlPlanMetrics *metrics);
+
+/* Parameter formatting helper. */
+static void peql_append_params(StringInfo buf, ParamListInfo params);
 
 /* SQL-callable reset function. */
 PG_FUNCTION_INFO_V1(pg_enhanced_query_logging_reset);
@@ -257,6 +334,76 @@ _PG_init(void)
 							 0,
 							 NULL, NULL, NULL);
 
+	/* ---- GUC: peql.rate_limit ---- */
+	DefineCustomIntVariable("peql.rate_limit",
+							"Log every Nth query or session.",
+							"1 means log all eligible queries.  Higher values "
+							"sample 1-in-N.  Works with peql.rate_limit_type.",
+							&peql_rate_limit,
+							1,
+							1, INT_MAX,
+							PGC_SUSET,
+							0,
+							NULL, NULL, NULL);
+
+	/* ---- GUC: peql.rate_limit_type ---- */
+	DefineCustomEnumVariable("peql.rate_limit_type",
+							 "Rate limiting mode: session or query.",
+							 "'session' decides once per backend whether to "
+							 "log; 'query' decides per individual query.",
+							 &peql_rate_limit_type,
+							 PEQL_RATE_LIMIT_QUERY,
+							 rate_limit_type_options,
+							 PGC_SUSET,
+							 0,
+							 NULL, NULL, NULL);
+
+	/* ---- GUC: peql.rate_limit_always_log_duration ---- */
+	DefineCustomIntVariable("peql.rate_limit_always_log_duration",
+							"Duration (ms) that always bypasses the rate limiter.",
+							"Queries exceeding this threshold are logged "
+							"regardless of sampling.  10000 = 10 seconds.",
+							&peql_rate_limit_always_log_duration,
+							10000,
+							0, INT_MAX,
+							PGC_SUSET,
+							GUC_UNIT_MS,
+							NULL, NULL, NULL);
+
+	/* ---- GUC: peql.log_parameter_values ---- */
+	DefineCustomBoolVariable("peql.log_parameter_values",
+							 "Log bind parameter values.",
+							 "When enabled, parameter values are appended "
+							 "after the query text in the log entry.",
+							 &peql_log_parameter_values,
+							 false,
+							 PGC_SUSET,
+							 0,
+							 NULL, NULL, NULL);
+
+	/* ---- GUC: peql.log_query_plan ---- */
+	DefineCustomBoolVariable("peql.log_query_plan",
+							 "Include EXPLAIN output in log entry.",
+							 "Appends the query execution plan after the "
+							 "query text.  Uses EXPLAIN ANALYZE (actual rows "
+							 "and timing from the just-finished execution).",
+							 &peql_log_query_plan,
+							 false,
+							 PGC_SUSET,
+							 0,
+							 NULL, NULL, NULL);
+
+	/* ---- GUC: peql.log_query_plan_format ---- */
+	DefineCustomEnumVariable("peql.log_query_plan_format",
+							 "EXPLAIN format for log_query_plan output.",
+							 NULL,
+							 &peql_log_query_plan_format,
+							 EXPLAIN_FORMAT_TEXT,
+							 query_plan_format_options,
+							 PGC_SUSET,
+							 0,
+							 NULL, NULL, NULL);
+
 	/* ---- GUC: peql.track_io_timing ---- */
 	DefineCustomBoolVariable("peql.track_io_timing",
 							 "Include block read/write times in log output.",
@@ -319,6 +466,10 @@ _PG_init(void)
 
 	prev_ExecutorEnd    = ExecutorEnd_hook;
 	ExecutorEnd_hook    = peql_ExecutorEnd;
+
+	/* ---- Install ProcessUtility hook (for DDL/utility logging) ---- */
+	prev_ProcessUtility  = ProcessUtility_hook;
+	ProcessUtility_hook  = peql_ProcessUtility;
 }
 
 /*
@@ -466,10 +617,58 @@ peql_ExecutorFinish(QueryDesc *queryDesc)
 
 /*
  * ──────────────────────────────────────────────────────────────────────────
+ * Rate limiter
+ *
+ * Decides whether the current query should be logged, taking into account
+ * the sampling rate and the always-log-duration override.
+ *
+ * Session mode: The first time this backend calls us, we draw once from
+ *   the PRNG; if selected, every query in this session is logged.
+ * Query mode: Each invocation draws independently.
+ *
+ * Queries that exceed peql.rate_limit_always_log_duration bypass the
+ * sampler entirely and are always logged.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static bool
+peql_should_log(double duration_ms)
+{
+	/* Always-log override: very slow queries bypass the rate limiter. */
+	if (peql_rate_limit_always_log_duration > 0 &&
+		duration_ms >= peql_rate_limit_always_log_duration)
+		return true;
+
+	/* No rate limiting when rate_limit == 1 (log everything). */
+	if (peql_rate_limit <= 1)
+		return true;
+
+	if (peql_rate_limit_type == PEQL_RATE_LIMIT_SESSION)
+	{
+		if (!peql_session_decided)
+		{
+			uint32 r = (uint32) (pg_prng_uint64(&pg_global_prng_state)
+								 % (uint64) peql_rate_limit);
+			peql_session_is_sampled = (r == 0);
+			peql_session_decided = true;
+		}
+		return peql_session_is_sampled;
+	}
+
+	/* PEQL_RATE_LIMIT_QUERY: per-query draw. */
+	{
+		uint32 r = (uint32) (pg_prng_uint64(&pg_global_prng_state)
+							 % (uint64) peql_rate_limit);
+		return (r == 0);
+	}
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
  * ExecutorEnd hook
  *
  * After the query has finished executing, check whether its duration
- * exceeds the configured threshold and, if so, write a log entry.
+ * exceeds the configured threshold and, if so, apply the rate limiter
+ * and write a log entry.
  * ──────────────────────────────────────────────────────────────────────────
  */
 static void
@@ -484,7 +683,7 @@ peql_ExecutorEnd(QueryDesc *queryDesc)
 
 		msec = queryDesc->totaltime->total * 1000.0;
 
-		if (msec >= peql_log_min_duration)
+		if (msec >= peql_log_min_duration && peql_should_log(msec))
 			peql_write_log_entry(queryDesc, msec);
 	}
 
@@ -493,6 +692,63 @@ peql_ExecutorEnd(QueryDesc *queryDesc)
 		prev_ExecutorEnd(queryDesc);
 	else
 		standard_ExecutorEnd(queryDesc);
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
+ * ProcessUtility hook
+ *
+ * Logs utility (DDL) statements when peql.log_utility is enabled.  Uses
+ * the same duration filter and rate limiter as regular queries.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static void
+peql_ProcessUtility(PlannedStmt *pstmt,
+					const char *queryString,
+					bool readOnlyTree,
+					ProcessUtilityContext context,
+					ParamListInfo params,
+					QueryEnvironment *queryEnv,
+					DestReceiver *dest,
+					QueryCompletion *qc)
+{
+	instr_time	start;
+	bool		do_log;
+
+	do_log = peql_log_utility && peql_enabled && peql_log_min_duration >= 0 &&
+		(nesting_level == 0 || peql_log_nested);
+
+	if (do_log)
+		INSTR_TIME_SET_CURRENT(start);
+
+	nesting_level++;
+	PG_TRY();
+	{
+		if (prev_ProcessUtility)
+			prev_ProcessUtility(pstmt, queryString, readOnlyTree, context,
+								params, queryEnv, dest, qc);
+		else
+			standard_ProcessUtility(pstmt, queryString, readOnlyTree, context,
+									params, queryEnv, dest, qc);
+	}
+	PG_FINALLY();
+	{
+		nesting_level--;
+	}
+	PG_END_TRY();
+
+	if (do_log)
+	{
+		instr_time	duration;
+		double		msec;
+
+		INSTR_TIME_SET_CURRENT(duration);
+		INSTR_TIME_SUBTRACT(duration, start);
+		msec = INSTR_TIME_GET_MILLISEC(duration);
+
+		if (msec >= peql_log_min_duration && peql_should_log(msec))
+			peql_write_utility_log_entry(queryString, msec, params);
+	}
 }
 
 /*
@@ -869,6 +1125,16 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 		}
 	}
 
+	/* ---- Rate limit metadata (all verbosity levels when rate_limit > 1) ---- */
+	if (peql_rate_limit > 1)
+	{
+		appendStringInfo(buf,
+						 "# Log_slow_rate_type: %s  Log_slow_rate_limit: %d\n",
+						 (peql_rate_limit_type == PEQL_RATE_LIMIT_SESSION)
+						 ? "session" : "query",
+						 peql_rate_limit);
+	}
+
 	/* ---- SET timestamp line ---- */
 	appendStringInfo(buf, "SET timestamp=%ld;\n", (long) stamp_time);
 
@@ -878,6 +1144,37 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 	if (buf->len > 0 && buf->data[buf->len - 1] != ';')
 		appendStringInfoChar(buf, ';');
 	appendStringInfoChar(buf, '\n');
+
+	/* ---- Bind parameter values ---- */
+	if (peql_log_parameter_values && queryDesc->params)
+		peql_append_params(buf, queryDesc->params);
+
+	/* ---- EXPLAIN plan output ---- */
+	if (peql_log_query_plan && queryDesc->planstate)
+	{
+		ExplainState *es = NewExplainState();
+
+		es->analyze = true;
+		es->verbose = false;
+		es->buffers = (peql_log_verbosity >= PEQL_LOG_VERBOSITY_FULL);
+		es->wal     = (peql_track_wal &&
+					   peql_log_verbosity >= PEQL_LOG_VERBOSITY_FULL);
+		es->timing  = true;
+		es->summary = false;
+		es->format  = peql_log_query_plan_format;
+
+		ExplainBeginOutput(es);
+		ExplainPrintPlan(es, queryDesc);
+		if (es->costs)
+			ExplainPrintJITSummary(es, queryDesc);
+		ExplainEndOutput(es);
+
+		/* Trim trailing newline from EXPLAIN output. */
+		if (es->str->len > 0 && es->str->data[es->str->len - 1] == '\n')
+			es->str->data[--es->str->len] = '\0';
+
+		appendStringInfo(buf, "# Plan:\n# %s\n", es->str->data);
+	}
 }
 
 /*
@@ -937,6 +1234,145 @@ peql_flush_to_file(const char *data, int len)
 
 /*
  * ──────────────────────────────────────────────────────────────────────────
+ * Parameter value formatter
+ *
+ * Appends a "# Parameters: $1 = '...', $2 = '...'" line to the log entry.
+ * Handles NULL values and uses the datum's text output function.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static void
+peql_append_params(StringInfo buf, ParamListInfo params)
+{
+	int		i;
+	int		nparams;
+	bool	first = true;
+
+	if (params == NULL)
+		return;
+
+	nparams = params->numParams;
+	if (nparams <= 0)
+		return;
+
+	appendStringInfoString(buf, "# Parameters: ");
+
+	for (i = 0; i < nparams; i++)
+	{
+		ParamExternData *prm = &params->params[i];
+
+		if (!first)
+			appendStringInfoString(buf, ", ");
+		first = false;
+
+		appendStringInfo(buf, "$%d = ", i + 1);
+
+		if (prm->isnull || !OidIsValid(prm->ptype))
+		{
+			appendStringInfoString(buf, "NULL");
+		}
+		else
+		{
+			Oid		typoutput;
+			bool	typisvarlena;
+			char   *val;
+
+			getTypeOutputInfo(prm->ptype, &typoutput, &typisvarlena);
+			val = OidOutputFunctionCall(typoutput, prm->value);
+			appendStringInfo(buf, "'%s'", val);
+			pfree(val);
+		}
+	}
+
+	appendStringInfoChar(buf, '\n');
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
+ * Utility statement log entry formatter
+ *
+ * Similar to peql_format_entry but for DDL/utility statements which don't
+ * go through the executor and therefore have no QueryDesc or plan tree.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static void
+peql_format_utility_entry(StringInfo buf, const char *queryString,
+						  double duration_ms, ParamListInfo params)
+{
+	TimestampTz	now;
+	pg_time_t	stamp_time;
+	char		timebuf[128];
+	struct pg_tm *tm_info;
+	int			usec;
+	const char *user  = NULL;
+	const char *host  = NULL;
+	const char *db    = NULL;
+	double		duration_sec;
+
+	if (MyProcPort)
+	{
+		user = MyProcPort->user_name;
+		host = MyProcPort->remote_host;
+		db   = MyProcPort->database_name;
+	}
+	if (user == NULL) user = "";
+	if (host == NULL) host = "";
+	if (db == NULL)   db   = "";
+
+	duration_sec = duration_ms / 1000.0;
+
+	now = GetCurrentTimestamp();
+	stamp_time = timestamptz_to_time_t(now);
+	tm_info = pg_localtime(&stamp_time, log_timezone);
+
+	usec = (int)(now % 1000000);
+	if (usec < 0) usec += 1000000;
+
+	snprintf(timebuf, sizeof(timebuf),
+			 "%04d-%02d-%02dT%02d:%02d:%02d.%06d",
+			 tm_info->tm_year + 1900,
+			 tm_info->tm_mon + 1,
+			 tm_info->tm_mday,
+			 tm_info->tm_hour,
+			 tm_info->tm_min,
+			 tm_info->tm_sec,
+			 usec);
+
+	appendStringInfo(buf, "# Time: %s\n", timebuf);
+	appendStringInfo(buf, "# User@Host: %s[%s] @ %s []\n", user, user, host);
+
+	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_STANDARD)
+	{
+		appendStringInfo(buf, "# Thread_id: %d  Schema: %s\n",
+						 MyProcPid, db);
+	}
+
+	appendStringInfo(buf,
+					 "# Query_time: %f  Lock_time: 0.000000"
+					 "  Rows_sent: 0  Rows_examined: 0\n",
+					 duration_sec);
+
+	if (peql_rate_limit > 1)
+	{
+		appendStringInfo(buf,
+						 "# Log_slow_rate_type: %s  Log_slow_rate_limit: %d\n",
+						 (peql_rate_limit_type == PEQL_RATE_LIMIT_SESSION)
+						 ? "session" : "query",
+						 peql_rate_limit);
+	}
+
+	appendStringInfo(buf, "SET timestamp=%ld;\n", (long) stamp_time);
+	appendStringInfoString(buf, queryString ? queryString : "");
+
+	if (buf->len > 0 && buf->data[buf->len - 1] != ';')
+		appendStringInfoChar(buf, ';');
+	appendStringInfoChar(buf, '\n');
+
+	if (peql_log_parameter_values && params)
+		peql_append_params(buf, params);
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
  * Top-level log entry writer
  *
  * Called from ExecutorEnd when a query exceeds the duration threshold.
@@ -955,6 +1391,21 @@ peql_write_log_entry(QueryDesc *queryDesc, double duration_ms)
 
 	/* Reset per-query planning time so it doesn't leak to the next query. */
 	peql_current_plan_time_ms = 0.0;
+}
+
+/*
+ * Writer for utility (DDL) log entries.
+ */
+static void
+peql_write_utility_log_entry(const char *queryString, double duration_ms,
+							 ParamListInfo params)
+{
+	StringInfoData buf;
+
+	initStringInfo(&buf);
+	peql_format_utility_entry(&buf, queryString, duration_ms, params);
+	peql_flush_to_file(buf.data, buf.len);
+	pfree(buf.data);
 }
 
 /*

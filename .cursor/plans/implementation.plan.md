@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: phase4-rate-limiting
     content: "Phase 4 - Rate limiting and filtering: Implement session-based and query-based rate limiting with rate_limit, rate_limit_type, rate_limit_always_log_duration GUCs. Add log_utility (ProcessUtility_hook), log_nested, log_parameter_values, log_query_plan GUCs. Emit Log_slow_rate_type/Log_slow_rate_limit in output."
-    status: pending
+    status: completed
   - id: phase5-testing
     content: "Phase 5 - Testing: SQL regression tests (GUC validation, extension load/unload, reset function). TAP tests (log file creation, output format verification, rate limiting behavior, metric accuracy, pt-query-digest parsing). Test configuration file."
     status: pending
