@@ -1,6 +1,6 @@
 # Bug: `pg_enhanced_query_logging_reset()` races with concurrent log writers
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Medium
 

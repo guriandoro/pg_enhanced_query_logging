@@ -1655,13 +1655,15 @@ peql_write_utility_log_entry(const char *queryString, double duration_ms,
 /*
  * pg_enhanced_query_logging_reset()
  *
- * Truncates the slow query log file.  Returns true on success.
+ * Rotates the slow query log file by renaming it to .old, so concurrent
+ * writers finish safely on the old inode and new writes create a fresh file.
+ * Returns true on success.
  */
 Datum
 pg_enhanced_query_logging_reset(PG_FUNCTION_ARGS)
 {
 	char	logpath[MAXPGPATH];
-	FILE   *fp;
+	char	oldpath[MAXPGPATH];
 
 	if (!superuser())
 		ereport(ERROR,
@@ -1669,25 +1671,25 @@ pg_enhanced_query_logging_reset(PG_FUNCTION_ARGS)
 				 errmsg("must be superuser to reset the enhanced query log")));
 
 	peql_resolve_log_path(logpath, sizeof(logpath));
+	snprintf(oldpath, sizeof(oldpath), "%s.old", logpath);
 
 	/*
-	 * Open with "w" (truncate) rather than "a" (append).  If the file
-	 * doesn't exist yet this creates it, which is fine.
+	 * Rename instead of truncate to avoid racing with concurrent writers.
+	 * Backends with the old file still open will finish writing to the
+	 * renamed inode; new opens will create a fresh file.
 	 */
-	fp = AllocateFile(logpath, "w");
-	if (fp == NULL)
+	if (rename(logpath, oldpath) != 0 && errno != ENOENT)
 	{
 		ereport(WARNING,
 				(errcode_for_file_access(),
-				 errmsg("peql: could not truncate log file \"%s\": %m",
-						logpath)));
+				 errmsg("peql: could not rename log file \"%s\" to \"%s\": %m",
+						logpath, oldpath)));
 		PG_RETURN_BOOL(false);
 	}
 
-	FreeFile(fp);
-
 	ereport(NOTICE,
-			(errmsg("peql: log file \"%s\" has been truncated", logpath)));
+			(errmsg("peql: log file \"%s\" has been rotated to \"%s\"",
+					logpath, oldpath)));
 
 	PG_RETURN_BOOL(true);
 }
