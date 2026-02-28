@@ -1,6 +1,6 @@
 # Bug: `SET timestamp` and `# Time:` reflect log-write time, not query start time
 
-## Status: Not fixed
+## Status: Fixed
 
 ## Priority: Medium
 

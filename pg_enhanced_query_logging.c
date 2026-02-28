@@ -1170,8 +1170,9 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 						 peql_rate_limit);
 	}
 
-	/* ---- SET timestamp line ---- */
-	appendStringInfo(buf, "SET timestamp=" INT64_FORMAT ";\n", (int64) stamp_time);
+	/* ---- SET timestamp line (query start time, not completion time) ---- */
+	appendStringInfo(buf, "SET timestamp=" INT64_FORMAT ";\n",
+					 (int64) stamp_time - (int64)(duration_ms / 1000.0));
 
 	/* ---- Query text ---- */
 	appendStringInfoString(buf, query_text);
@@ -1395,7 +1396,9 @@ peql_format_utility_entry(StringInfo buf, const char *queryString,
 						 peql_rate_limit);
 	}
 
-	appendStringInfo(buf, "SET timestamp=" INT64_FORMAT ";\n", (int64) stamp_time);
+	/* SET timestamp reflects query start time, not completion time. */
+	appendStringInfo(buf, "SET timestamp=" INT64_FORMAT ";\n",
+					 (int64) stamp_time - (int64)(duration_ms / 1000.0));
 	appendStringInfoString(buf, queryString ? queryString : "");
 
 	if (buf->len > 0 && buf->data[buf->len - 1] != ';')
