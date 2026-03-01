@@ -199,6 +199,7 @@ Adds connection metadata:
 # Time: 2026-02-27T14:30:00.123456
 # User@Host: alice[alice] @ 192.168.1.10 []
 # Thread_id: 12345  Schema: mydb.public
+# Bytes_sent: 4096
 # Query_time: 0.523411  Lock_time: 0.000000  Rows_sent: 42  Rows_examined: 15000
 # Rows_affected: 0
 SET timestamp=1772147400;
@@ -213,6 +214,7 @@ Adds buffer, WAL, JIT, plan quality, and memory metrics:
 # Time: 2026-02-27T14:30:00.123456
 # User@Host: alice[alice] @ 192.168.1.10 []
 # Thread_id: 12345  Schema: mydb.public
+# Bytes_sent: 4096
 # Query_time: 0.523411  Lock_time: 0.000000  Rows_sent: 42  Rows_examined: 15000
 # Rows_affected: 0
 # Shared_blks_hit: 128  Shared_blks_read: 42  Shared_blks_dirtied: 0  Shared_blks_written: 0
@@ -235,6 +237,7 @@ SELECT * FROM orders WHERE status = 'pending';
 | `User@Host` | `MyProcPort` | all | Connecting user and remote host |
 | `Thread_id` | `MyProcPid` | standard+ | PostgreSQL backend PID (Process ID) |
 | `Schema` | `fetch_search_path()` | standard+ | Database and schema in `db.schema` format |
+| `Bytes_sent` | `rows * plan_width` | standard+ | Estimated bytes sent to the client (planner row width times rows processed) |
 | `Query_time` | `Instrumentation.total` | all | Total execution time in seconds |
 | `Lock_time` | -- | all | Reserved (always 0; PostgreSQL doesn't expose per-query lock wait time the same way MySQL does) |
 | `Rows_sent` | `es_processed` (SELECT) | all | Rows returned to the client |

@@ -1137,6 +1137,18 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 		else
 			appendStringInfo(buf, "# Thread_id: %d  Schema: %s  Last_errno: 0  Killed: 0\n",
 							 MyProcPid, db);
+
+		if (queryDesc->planstate && queryDesc->planstate->plan)
+		{
+			int		plan_width = queryDesc->planstate->plan->plan_width;
+			int64	bytes_sent = (int64) rows_processed * plan_width;
+
+			appendStringInfo(buf, "# Bytes_sent: " INT64_FORMAT "\n", bytes_sent);
+		}
+		else
+		{
+			appendStringInfoString(buf, "# Bytes_sent: 0\n");
+		}
 	}
 
 	/*
@@ -1587,6 +1599,8 @@ peql_format_utility_entry(StringInfo buf, const char *queryString,
 		else
 			appendStringInfo(buf, "# Thread_id: %d  Schema: %s  Last_errno: 0  Killed: 0\n",
 							 MyProcPid, db);
+
+		appendStringInfoString(buf, "# Bytes_sent: 0\n");
 	}
 
 	appendStringInfo(buf,
