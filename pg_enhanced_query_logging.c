@@ -46,6 +46,7 @@
 #include "nodes/nodeFuncs.h"
 #include "nodes/params.h"
 #include "optimizer/planner.h"
+#include "parser/analyze.h"
 #include "pgtime.h"
 #include "postmaster/syslogger.h"
 #include "storage/fd.h"
@@ -175,6 +176,9 @@ static bool peql_session_is_sampled = false;
 /* ---------- Per-query planning time (set by planner hook) ---------------- */
 static double peql_current_plan_time_ms = 0.0;
 
+/* ---------- Per-query ID (set by post_parse_analyze hook) --------------- */
+static int64 peql_current_query_id = 0;
+
 /*
  * Context passed through the plan-tree walker to collect plan quality
  * indicators (Full_scan, Filesort, Temp_table) and accurate Rows_examined.
@@ -207,6 +211,7 @@ static int planner_nesting_level = 0;
 	 (nesting_level == 0 || peql_log_nested))
 
 /* Saved previous hook values so we can chain properly. */
+static post_parse_analyze_hook_type prev_post_parse_analyze = NULL;
 static planner_hook_type            prev_planner         = NULL;
 static ExecutorStart_hook_type      prev_ExecutorStart   = NULL;
 static ExecutorRun_hook_type        prev_ExecutorRun     = NULL;
@@ -215,6 +220,8 @@ static ExecutorEnd_hook_type        prev_ExecutorEnd     = NULL;
 static ProcessUtility_hook_type     prev_ProcessUtility  = NULL;
 
 /* Forward declarations for hook functions. */
+static void peql_post_parse_analyze(ParseState *pstate, Query *query,
+									JumbleState *jstate);
 static PlannedStmt *peql_planner(Query *parse, const char *query_string,
 								 int cursorOptions,
 								 ParamListInfo boundParams);
@@ -513,6 +520,10 @@ _PG_init(void)
 	/* Reserve the "peql" GUC prefix so no other extension can claim it. */
 	MarkGUCPrefixReserved("peql");
 
+	/* ---- Install post_parse_analyze hook (for Query_id capture) ---- */
+	prev_post_parse_analyze  = post_parse_analyze_hook;
+	post_parse_analyze_hook  = peql_post_parse_analyze;
+
 	/* ---- Install planner hook ---- */
 	prev_planner       = planner_hook;
 	planner_hook       = peql_planner;
@@ -538,12 +549,33 @@ _PG_init(void)
 void
 _PG_fini(void)
 {
+	post_parse_analyze_hook = prev_post_parse_analyze;
 	planner_hook        = prev_planner;
 	ExecutorStart_hook  = prev_ExecutorStart;
 	ExecutorRun_hook    = prev_ExecutorRun;
 	ExecutorFinish_hook = prev_ExecutorFinish;
 	ExecutorEnd_hook    = prev_ExecutorEnd;
 	ProcessUtility_hook = prev_ProcessUtility;
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
+ * Post-parse-analysis hook
+ *
+ * Captures Query->queryId computed by the core parser (when
+ * compute_query_id = on/auto) so we can emit it in the log entry for
+ * cross-referencing with pg_stat_statements.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static void
+peql_post_parse_analyze(ParseState *pstate, Query *query,
+						JumbleState *jstate)
+{
+	if (prev_post_parse_analyze)
+		prev_post_parse_analyze(pstate, query, jstate);
+
+	if (peql_enabled && query->queryId != INT64CONST(0))
+		peql_current_query_id = query->queryId;
 }
 
 /*
@@ -782,8 +814,9 @@ peql_ExecutorEnd(QueryDesc *queryDesc)
 		}
 	}
 
-	/* Always reset so plan time doesn't leak to the next query. */
+	/* Always reset so per-query state doesn't leak to the next query. */
 	peql_current_plan_time_ms = 0.0;
+	peql_current_query_id = 0;
 
 	/* Chain to previous hook or the standard cleanup. */
 	if (prev_ExecutorEnd)
@@ -1149,6 +1182,10 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 		{
 			appendStringInfoString(buf, "# Bytes_sent: 0\n");
 		}
+
+		if (peql_current_query_id != INT64CONST(0))
+			appendStringInfo(buf, "# Query_id: " INT64_FORMAT "\n",
+							 peql_current_query_id);
 	}
 
 	/*
@@ -1601,6 +1638,10 @@ peql_format_utility_entry(StringInfo buf, const char *queryString,
 							 MyProcPid, db);
 
 		appendStringInfoString(buf, "# Bytes_sent: 0\n");
+
+		if (peql_current_query_id != INT64CONST(0))
+			appendStringInfo(buf, "# Query_id: " INT64_FORMAT "\n",
+							 peql_current_query_id);
 	}
 
 	appendStringInfo(buf,

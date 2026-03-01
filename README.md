@@ -200,6 +200,7 @@ Adds connection metadata:
 # User@Host: alice[alice] @ 192.168.1.10 []
 # Thread_id: 12345  Schema: mydb.public
 # Bytes_sent: 4096
+# Query_id: -6432758210044805760
 # Query_time: 0.523411  Lock_time: 0.000000  Rows_sent: 42  Rows_examined: 15000
 # Rows_affected: 0
 SET timestamp=1772147400;
@@ -215,6 +216,7 @@ Adds buffer, WAL, JIT, plan quality, and memory metrics:
 # User@Host: alice[alice] @ 192.168.1.10 []
 # Thread_id: 12345  Schema: mydb.public
 # Bytes_sent: 4096
+# Query_id: -6432758210044805760
 # Query_time: 0.523411  Lock_time: 0.000000  Rows_sent: 42  Rows_examined: 15000
 # Rows_affected: 0
 # Shared_blks_hit: 128  Shared_blks_read: 42  Shared_blks_dirtied: 0  Shared_blks_written: 0
@@ -238,6 +240,7 @@ SELECT * FROM orders WHERE status = 'pending';
 | `Thread_id` | `MyProcPid` | standard+ | PostgreSQL backend PID (Process ID) |
 | `Schema` | `fetch_search_path()` | standard+ | Database and schema in `db.schema` format |
 | `Bytes_sent` | `rows * plan_width` | standard+ | Estimated bytes sent to the client (planner row width times rows processed) |
+| `Query_id` | `Query->queryId` | standard+ | Query identifier for cross-referencing with `pg_stat_statements` (requires `compute_query_id = on` or `auto`) |
 | `Query_time` | `Instrumentation.total` | all | Total execution time in seconds |
 | `Lock_time` | -- | all | Reserved (always 0; PostgreSQL doesn't expose per-query lock wait time the same way MySQL does) |
 | `Rows_sent` | `es_processed` (SELECT) | all | Rows returned to the client |
@@ -346,13 +349,13 @@ The extension installs hooks in `_PG_init()`, chaining with any previously insta
                                         │  loads _PG_init()        │
                                         └────────────┬─────────────┘
                                                      │
-             ┌───────────────────────────────────────┼───────────────────────────────────────┐
-             │                                       │                                       │
-    ┌────────▼──────────┐                ┌───────────▼────────────┐              ┌───────────▼───────────┐
-    │  planner_hook     │                │  ExecutorStart_hook    │              │  ProcessUtility_hook  │
-    │  measure planning │                │  enable INSTRUMENT_ALL │              │  time DDL statements  │
-    │  time             │                └────────────┬───────────┘              └───────────────────────┘
-    └───────────────────┘                             │
+     ┌───────────────────────────────────────────────┼───────────────────────────────────────┐
+     │                    │                          │                                       │
+┌────▼─────────────┐ ┌───▼──────────┐   ┌───────────▼────────────┐              ┌───────────▼───────────┐
+│ post_parse_       │ │ planner_hook │   │  ExecutorStart_hook    │              │  ProcessUtility_hook  │
+│ analyze_hook      │ │ measure plan │   │  enable INSTRUMENT_ALL │              │  time DDL statements  │
+│ capture query_id  │ │ time         │   └────────────┬───────────┘              └───────────────────────┘
+└──────────────────┘ └──────────────┘                 │
                                          ┌────────────▼──────────┐
                                          │  ExecutorRun_hook     │
                                          │  track nesting depth  │
