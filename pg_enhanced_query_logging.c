@@ -38,6 +38,7 @@
 #include "executor/executor.h"
 #include "executor/instrument.h"
 #include "fmgr.h"
+#include "funcapi.h"
 #include "jit/jit.h"
 #include "lib/stringinfo.h"
 #include "libpq/libpq-be.h"
@@ -58,7 +59,7 @@
 
 PG_MODULE_MAGIC_EXT(
 	.name = "pg_enhanced_query_logging",
-	.version = "1.1"
+	.version = "1.2"
 );
 
 /* ---------- GUC variables ------------------------------------------------ */
@@ -154,6 +155,12 @@ static bool peql_track_memory = false;
 
 /* Track planning time separately from execution time. */
 static bool peql_track_planning = false;
+
+/* ---------- Internal per-backend statistics counters -------------------- */
+
+static int64 peql_queries_logged  = 0;
+static int64 peql_queries_skipped = 0;
+static int64 peql_bytes_written   = 0;
 
 /* ---------- Rate limiting state ----------------------------------------- */
 
@@ -254,8 +261,9 @@ static void peql_append_params(StringInfo buf, ParamListInfo params);
 /* Common header formatting (Time, User@Host, timestamp computation). */
 static pg_time_t peql_format_header(StringInfo buf, double duration_ms);
 
-/* SQL-callable reset function. */
+/* SQL-callable functions. */
 PG_FUNCTION_INFO_V1(pg_enhanced_query_logging_reset);
+PG_FUNCTION_INFO_V1(pg_enhanced_query_logging_stats);
 
 /*
  * GUC check hooks: reject log_filename values with path separators or
@@ -765,8 +773,13 @@ peql_ExecutorEnd(QueryDesc *queryDesc)
 
 		msec = queryDesc->totaltime->total * 1000.0;
 
-		if (msec >= peql_log_min_duration && peql_should_log(msec))
-			peql_write_log_entry(queryDesc, msec);
+		if (msec >= peql_log_min_duration)
+		{
+			if (peql_should_log(msec))
+				peql_write_log_entry(queryDesc, msec);
+			else
+				peql_queries_skipped++;
+		}
 	}
 
 	/* Always reset so plan time doesn't leak to the next query. */
@@ -836,8 +849,13 @@ peql_ProcessUtility(PlannedStmt *pstmt,
 		INSTR_TIME_SUBTRACT(duration, start);
 		msec = INSTR_TIME_GET_MILLISEC(duration);
 
-		if (msec >= peql_log_min_duration && peql_should_log(msec))
-			peql_write_utility_log_entry(queryString, msec, params);
+		if (msec >= peql_log_min_duration)
+		{
+			if (peql_should_log(msec))
+				peql_write_utility_log_entry(queryString, msec, params);
+			else
+				peql_queries_skipped++;
+		}
 	}
 }
 
@@ -1624,6 +1642,8 @@ peql_write_log_entry(QueryDesc *queryDesc, double duration_ms)
 		initStringInfo(&buf);
 		peql_format_entry(&buf, queryDesc, duration_ms);
 		peql_flush_to_file(buf.data, buf.len);
+		peql_queries_logged++;
+		peql_bytes_written += buf.len;
 	}
 	PG_CATCH();
 	{
@@ -1659,6 +1679,8 @@ peql_write_utility_log_entry(const char *queryString, double duration_ms,
 		initStringInfo(&buf);
 		peql_format_utility_entry(&buf, queryString, duration_ms, params);
 		peql_flush_to_file(buf.data, buf.len);
+		peql_queries_logged++;
+		peql_bytes_written += buf.len;
 	}
 	PG_CATCH();
 	{
@@ -1717,9 +1739,42 @@ pg_enhanced_query_logging_reset(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(false);
 	}
 
+	peql_queries_logged  = 0;
+	peql_queries_skipped = 0;
+	peql_bytes_written   = 0;
+
 	ereport(NOTICE,
 			(errmsg("peql: log file \"%s\" has been rotated to \"%s\"",
 					logpath, oldpath)));
 
 	PG_RETURN_BOOL(true);
+}
+
+/*
+ * pg_enhanced_query_logging_stats()
+ *
+ * Returns per-backend logging counters: queries_logged, queries_skipped,
+ * bytes_written.  These track activity since the last reset (or server
+ * start) and are local to the calling backend.
+ */
+Datum
+pg_enhanced_query_logging_stats(PG_FUNCTION_ARGS)
+{
+	TupleDesc	tupdesc;
+	Datum		values[3];
+	bool		nulls[3] = {false, false, false};
+
+	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("function returning record called in context that "
+						"cannot accept type record")));
+
+	tupdesc = BlessTupleDesc(tupdesc);
+
+	values[0] = Int64GetDatum(peql_queries_logged);
+	values[1] = Int64GetDatum(peql_queries_skipped);
+	values[2] = Int64GetDatum(peql_bytes_written);
+
+	PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls)));
 }

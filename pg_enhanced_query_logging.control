@@ -1,5 +1,5 @@
 # pg_enhanced_query_logging extension
 comment = 'enhanced query logging compatible with pt-query-digest'
-default_version = '1.1'
+default_version = '1.2'
 module_pathname = '$libdir/pg_enhanced_query_logging'
 relocatable = false
