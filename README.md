@@ -384,6 +384,8 @@ The extension implements the Percona Server rate limiting model:
 - **Query mode** (`peql.rate_limit_type = 'query'`): Each query independently draws from the PRNG with a 1-in-N chance of being logged. This gives a uniform sample across all sessions.
 - **Always-log override**: Queries exceeding `peql.rate_limit_always_log_duration` bypass the rate limiter entirely, ensuring very slow queries are never missed.
 
+Rate limiting uses PostgreSQL's built-in PRNG (`pg_prng_uint64()` from `pg_global_prng_state`). For a configured rate limit of *N*, the extension draws a random 64-bit integer and computes `r = random % N`; the query is logged only if `r == 0`, giving a uniform 1-in-N probability. In session mode, this draw happens once per backend (on the first query) and the result is cached for the lifetime of the session. In query mode, each query draws independently.
+
 ### File I/O
 
 - Uses PostgreSQL's `AllocateFile()`/`FreeFile()` for managed file handles
