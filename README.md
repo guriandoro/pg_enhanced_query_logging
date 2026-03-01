@@ -137,6 +137,7 @@ All GUC (Grand Unified Configuration) variables are prefixed with `peql.` and ca
 | `peql.track_wal` | bool | `on` | SUSET | Include WAL usage metrics (records, bytes, full-page images) |
 | `peql.track_memory` | bool | `off` | SUSET | Include memory context allocation (experimental, adds overhead) |
 | `peql.track_planning` | bool | `off` | SUSET | Track and log planning time separately from execution time |
+| `peql.track_wait_events` | bool | `off` | SUSET | Sample and log wait events during execution (experimental, 10ms timer) |
 
 ### Query Plan and Parameters
 
@@ -271,6 +272,7 @@ SELECT * FROM orders WHERE status = 'pending';
 | `Filesort_on_disk` | Tuplesort stats | full | Whether the sort spilled to disk |
 | `Table_io` | Per-node `BufferUsage` | full | Per-table I/O attribution showing buffer hits and reads for the top 5 tables |
 | `Mem_allocated` | `MemoryContextMemAllocated()` | full | Bytes allocated in the query memory context (requires `peql.track_memory`) |
+| `Wait_events` | Periodic sampling | full | Histogram of wait events observed during execution (requires `peql.track_wait_events`) |
 | `JIT_functions` | `JitInstrumentation` | full | Number of JIT-compiled functions |
 | `JIT_generation_time` | `JitInstrumentation` | full | Time spent generating JIT code (seconds) |
 | `JIT_inlining_time` | `JitInstrumentation` | full | Time spent inlining JIT code (seconds) |

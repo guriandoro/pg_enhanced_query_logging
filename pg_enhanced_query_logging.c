@@ -52,6 +52,7 @@
 #include "postmaster/syslogger.h"
 #include "port/atomics.h"
 #include "storage/fd.h"
+#include "storage/proc.h"
 #include "storage/ipc.h"
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
@@ -60,8 +61,10 @@
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/timeout.h"
 #include "utils/timestamp.h"
 #include "utils/tuplesort.h"
+#include "utils/wait_event.h"
 
 PG_MODULE_MAGIC_EXT(
 	.name = "pg_enhanced_query_logging",
@@ -167,6 +170,9 @@ static bool peql_track_wal = true;
 /* Track memory context usage (experimental -- adds overhead). */
 static bool peql_track_memory = false;
 
+/* Track wait events via periodic sampling (experimental). */
+static bool peql_track_wait_events = false;
+
 /* Track planning time separately from execution time. */
 static bool peql_track_planning = false;
 
@@ -205,6 +211,21 @@ static double peql_current_plan_time_ms = 0.0;
 
 /* ---------- Per-query ID (set by post_parse_analyze hook) --------------- */
 static int64 peql_current_query_id = 0;
+
+/* ---------- Wait event sampling state ----------------------------------- */
+
+#define PEQL_MAX_WAIT_EVENTS	64
+
+typedef struct PeqlWaitEventSample
+{
+	uint32	wait_event_info;
+	int		count;
+} PeqlWaitEventSample;
+
+static PeqlWaitEventSample peql_wait_samples[PEQL_MAX_WAIT_EVENTS];
+static int peql_wait_sample_count = 0;
+static bool peql_wait_sampling_active = false;
+static TimeoutId peql_wait_timeout_id = MAX_TIMEOUTS;
 
 /*
  * Per-table I/O attribution: tracks buffer hits and reads for each
@@ -310,6 +331,12 @@ static void peql_adaptive_record(int bytes);
 static bool peql_plan_walker(PlanState *planstate, void *context);
 static void peql_collect_plan_metrics(QueryDesc *queryDesc,
 									  PeqlPlanMetrics *metrics);
+
+/* Wait event sampling. */
+static void peql_wait_event_sample_handler(void);
+static void peql_start_wait_sampling(void);
+static void peql_stop_wait_sampling(void);
+static void peql_format_wait_events(StringInfo buf);
 
 /* Parameter formatting helper. */
 static void peql_append_params(StringInfo buf, ParamListInfo params);
@@ -592,6 +619,18 @@ _PG_init(void)
 							 0,
 							 NULL, NULL, NULL);
 
+	/* ---- GUC: peql.track_wait_events ---- */
+	DefineCustomBoolVariable("peql.track_wait_events",
+							 "Sample and log wait events during execution.",
+							 "Experimental. Uses a 10ms timer to sample the "
+							 "backend wait event state and reports a histogram "
+							 "in the log entry at full verbosity.",
+							 &peql_track_wait_events,
+							 false,
+							 PGC_SUSET,
+							 0,
+							 NULL, NULL, NULL);
+
 	/* Reserve the "peql" GUC prefix so no other extension can claim it. */
 	MarkGUCPrefixReserved("peql");
 
@@ -755,6 +794,102 @@ peql_adaptive_record(int bytes)
 
 /*
  * ──────────────────────────────────────────────────────────────────────────
+ * Wait event sampling
+ *
+ * When peql.track_wait_events is on, a 10ms periodic timeout samples
+ * MyProc->wait_event_info and accumulates a histogram.  The histogram
+ * is formatted into a "# Wait_events:" line at full verbosity.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static void
+peql_wait_event_sample_handler(void)
+{
+	uint32 info;
+
+	if (!peql_wait_sampling_active || MyProc == NULL)
+		return;
+
+	info = MyProc->wait_event_info;
+
+	if (info != 0)
+	{
+		int		i;
+		bool	found = false;
+
+		for (i = 0; i < peql_wait_sample_count; i++)
+		{
+			if (peql_wait_samples[i].wait_event_info == info)
+			{
+				peql_wait_samples[i].count++;
+				found = true;
+				break;
+			}
+		}
+
+		if (!found && peql_wait_sample_count < PEQL_MAX_WAIT_EVENTS)
+		{
+			peql_wait_samples[peql_wait_sample_count].wait_event_info = info;
+			peql_wait_samples[peql_wait_sample_count].count = 1;
+			peql_wait_sample_count++;
+		}
+	}
+
+	enable_timeout_after(peql_wait_timeout_id, 10);
+}
+
+static void
+peql_start_wait_sampling(void)
+{
+	if (!peql_track_wait_events || !peql_active())
+		return;
+
+	peql_wait_sample_count = 0;
+	memset(peql_wait_samples, 0, sizeof(peql_wait_samples));
+	peql_wait_sampling_active = true;
+
+	if (peql_wait_timeout_id == MAX_TIMEOUTS)
+		peql_wait_timeout_id = RegisterTimeout(USER_TIMEOUT,
+											   peql_wait_event_sample_handler);
+
+	enable_timeout_after(peql_wait_timeout_id, 10);
+}
+
+static void
+peql_stop_wait_sampling(void)
+{
+	if (!peql_wait_sampling_active)
+		return;
+
+	peql_wait_sampling_active = false;
+	disable_timeout(peql_wait_timeout_id, false);
+}
+
+static void
+peql_format_wait_events(StringInfo buf)
+{
+	int		i;
+
+	if (peql_wait_sample_count == 0)
+		return;
+
+	appendStringInfoString(buf, "# Wait_events:");
+
+	for (i = 0; i < peql_wait_sample_count; i++)
+	{
+		const char *type = pgstat_get_wait_event_type(peql_wait_samples[i].wait_event_info);
+		const char *event = pgstat_get_wait_event(peql_wait_samples[i].wait_event_info);
+
+		appendStringInfo(buf, " %s:%s=%d",
+						 type ? type : "???",
+						 event ? event : "???",
+						 peql_wait_samples[i].count);
+	}
+
+	appendStringInfoChar(buf, '\n');
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
  * Post-parse-analysis hook
  *
  * Captures Query->queryId computed by the core parser (when
@@ -878,6 +1013,8 @@ peql_ExecutorStart(QueryDesc *queryDesc, int eflags)
 			queryDesc->totaltime = InstrAlloc(1, INSTRUMENT_ALL, false);
 			MemoryContextSwitchTo(oldcxt);
 		}
+
+		peql_start_wait_sampling();
 	}
 }
 
@@ -995,6 +1132,8 @@ peql_should_log(double duration_ms)
 static void
 peql_ExecutorEnd(QueryDesc *queryDesc)
 {
+	peql_stop_wait_sampling();
+
 	if (queryDesc->totaltime && peql_active())
 	{
 		double msec;
@@ -1673,6 +1812,10 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 
 			appendStringInfo(buf, "# Mem_allocated: " UINT64_FORMAT "\n", (uint64) mem);
 		}
+
+		/* ---- Wait event histogram ---- */
+		if (peql_track_wait_events)
+			peql_format_wait_events(buf);
 	}
 
 	/* ---- Rate limit metadata (all verbosity levels when rate_limit > 1) ---- */
