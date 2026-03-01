@@ -8,7 +8,7 @@ PostgreSQL 18 installed at `/opt/postgresql/18.3`.
 - PostgreSQL 18 installed at `/opt/postgresql/18.3`
 - The extension source compiled (see Build step below)
 - Optionally, `pt-query-digest` from Percona Toolkit for format validation
-- For the TAP tests: `IPC::Run` Perl module and the PostgreSQL test Perl modules
+- For the TAP (Test Anything Protocol) tests: `IPC::Run` Perl module and the PostgreSQL test Perl modules
 
 ### Installing IPC::Run on macOS
 
@@ -107,7 +107,7 @@ means `PG_REGRESS` is not set. See [PG_REGRESS environment variable](#pg_regress
 installed or not in Perl's `@INC` path. See [Installing IPC::Run on macOS](#installing-ipcrun-on-macos).
 
 **`02_guc` SQL regression test fails:** The test expects default `peql.*`
-GUC values. If you have customized any `peql.*` settings in
+GUC (Grand Unified Configuration) values. If you have customized any `peql.*` settings in
 `postgresql.conf`, the `SHOW` output will not match `expected/02_guc.out`.
 Run against a server with default settings, or focus on the TAP tests which
 create isolated instances.
@@ -148,7 +148,7 @@ shared_preload_libraries = 'pg_enhanced_query_logging'
 peql.enabled               = on
 peql.log_min_duration      = 0          # log ALL queries for testing
 peql.log_verbosity         = 'full'     # emit all extended metrics
-peql.log_utility           = on         # log DDL statements
+peql.log_utility           = on         # log DDL (Data Definition Language) statements
 peql.log_nested            = off        # off initially; toggled in tests
 peql.track_planning        = on         # show Plan_time
 peql.track_wal             = on         # show WAL_records / WAL_bytes / WAL_fpi
@@ -204,7 +204,7 @@ psql -d postgres -c "SELECT generate_series(1, 10000) AS n ORDER BY n DESC;"
 
 **Expected:** `Filesort: Yes`, `Full_scan: Yes`.
 
-### 6.3 DML -- CREATE TABLE AS, UPDATE, DELETE (Rows_affected)
+### 6.3 DML (Data Manipulation Language) -- CREATE TABLE AS, UPDATE, DELETE (Rows_affected)
 
 ```bash
 psql -d postgres <<'SQL'
@@ -231,7 +231,7 @@ SQL
 **Expected:** `Shared_blks_hit` and/or `Shared_blks_read` > 0.
 `WAL_records` and `WAL_bytes` > 0 on the `CREATE TABLE` and `ANALYZE`.
 
-### 6.5 Heavy query to trigger JIT (if available)
+### 6.5 Heavy query to trigger JIT (Just-In-Time compilation), if available
 
 ```bash
 psql -d postgres -c "SET jit_above_cost = 10; SELECT count(*), sum(id), avg(id) FROM generate_series(1, 1000000) AS id;"
@@ -311,7 +311,7 @@ psql -d postgres -c "SET peql.log_verbosity = 'standard'; SELECT 1;"
 ```
 
 After each command, check the log file to verify that verbosity changes
-take effect. Entries logged at `minimal` should have no buffer/WAL/JIT lines.
+take effect. Entries logged at `minimal` should have no buffer, WAL (Write-Ahead Log), or JIT lines.
 
 ## 10. Test the Reset Function
 
@@ -769,7 +769,7 @@ meson test -C . --suite pg_enhanced_query_logging
 The `meson.build` file declares the shared module, regression tests, TAP
 tests, and extension data files.
 
-### 20.4 CI/CD
+### 20.4 CI/CD (Continuous Integration / Continuous Delivery)
 
 Automated tests run on every push and pull request via GitHub Actions
 (`.github/workflows/test.yml`). The CI matrix covers:

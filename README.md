@@ -2,7 +2,7 @@
 
 A PostgreSQL extension that produces **pt-query-digest-compatible slow query logs** with extended PostgreSQL-specific metrics. Modeled after [Percona Server's improved slow query log](https://docs.percona.com/percona-server/innovation-release/slow-extended.html), it gives PostgreSQL users the same rich query analysis workflow that MySQL/Percona Server users have enjoyed for years.
 
-The extension hooks into the executor pipeline to capture timing, buffer I/O, WAL, JIT, and row-count metrics for every query that exceeds a configurable duration threshold, then writes them to a dedicated log file that [`pt-query-digest`](https://docs.percona.com/percona-toolkit/pt-query-digest.html) can parse directly.
+The extension hooks into the executor pipeline to capture timing, buffer I/O, WAL (Write-Ahead Log), JIT (Just-In-Time compilation), and row-count metrics for every query that exceeds a configurable duration threshold, then writes them to a dedicated log file that [`pt-query-digest`](https://docs.percona.com/percona-toolkit/pt-query-digest.html) can parse directly.
 
 ## Features
 
@@ -14,7 +14,7 @@ The extension hooks into the executor pipeline to capture timing, buffer I/O, WA
 - **JIT metrics** -- function count, generation/optimization/inlining/emission times
 - **Planning time tracking** -- separate planner hook measures planning wall-clock time
 - **Memory context tracking** -- experimental per-query memory allocation measurement
-- **Utility statement logging** -- optional logging of DDL and other utility statements
+- **Utility statement logging** -- optional logging of DDL (Data Definition Language) and other utility statements
 - **Nested statement logging** -- optional logging of statements inside PL/pgSQL functions
 - **Parameter value logging** -- optional inclusion of bind parameter values
 - **EXPLAIN plan inclusion** -- optional EXPLAIN ANALYZE output embedded in the log entry
@@ -100,7 +100,7 @@ pt-query-digest --type slowlog $(pg_config --logdir)/peql-slow.log
 
 ## Configuration Reference
 
-All GUC variables are prefixed with `peql.` and can be set in `postgresql.conf` or at runtime (within their context restrictions).
+All GUC (Grand Unified Configuration) variables are prefixed with `peql.` and can be set in `postgresql.conf` or at runtime (within their context restrictions).
 
 ### Core Settings
 
@@ -233,13 +233,13 @@ SELECT * FROM orders WHERE status = 'pending';
 |-------|--------|-----------|-------------|
 | `Time` | `GetCurrentTimestamp()` | all | ISO-8601 timestamp with microsecond precision |
 | `User@Host` | `MyProcPort` | all | Connecting user and remote host |
-| `Thread_id` | `MyProcPid` | standard+ | PostgreSQL backend PID |
+| `Thread_id` | `MyProcPid` | standard+ | PostgreSQL backend PID (Process ID) |
 | `Schema` | `fetch_search_path()` | standard+ | Database and schema in `db.schema` format |
 | `Query_time` | `Instrumentation.total` | all | Total execution time in seconds |
 | `Lock_time` | -- | all | Reserved (always 0; PostgreSQL doesn't expose per-query lock wait time the same way MySQL does) |
 | `Rows_sent` | `es_processed` (SELECT) | all | Rows returned to the client |
 | `Rows_examined` | Plan tree ntuples sum | all | Rows scanned across all plan nodes |
-| `Rows_affected` | `es_processed` (DML) | standard+ | Rows modified by INSERT/UPDATE/DELETE |
+| `Rows_affected` | `es_processed` (DML, Data Manipulation Language) | standard+ | Rows modified by INSERT/UPDATE/DELETE |
 | `Shared_blks_hit` | `BufferUsage` | full | Shared buffer hits |
 | `Shared_blks_read` | `BufferUsage` | full | Shared blocks read from disk |
 | `Shared_blks_dirtied` | `BufferUsage` | full | Shared blocks dirtied |
@@ -380,7 +380,7 @@ The extension installs hooks in `_PG_init()`, chaining with any previously insta
 
 The extension implements the Percona Server rate limiting model:
 
-- **Session mode** (`peql.rate_limit_type = 'session'`): On first query in a backend, draw once from the PRNG. If selected (1-in-N chance), every query in this session is logged. This produces complete session traces for sampled sessions.
+- **Session mode** (`peql.rate_limit_type = 'session'`): On first query in a backend, draw once from the PRNG (Pseudo-Random Number Generator). If selected (1-in-N chance), every query in this session is logged. This produces complete session traces for sampled sessions.
 - **Query mode** (`peql.rate_limit_type = 'query'`): Each query independently draws from the PRNG with a 1-in-N chance of being logged. This gives a uniform sample across all sessions.
 - **Always-log override**: Queries exceeding `peql.rate_limit_always_log_duration` bypass the rate limiter entirely, ensuring very slow queries are never missed.
 
@@ -419,7 +419,7 @@ SELECT pg_enhanced_query_logging_reset();
 
 ## Testing
 
-The extension has three testing layers: SQL regression tests, Perl TAP tests, and a manual testing guide. All automated tests use standard PostgreSQL testing infrastructure and work on both macOS and Linux.
+The extension has three testing layers: SQL regression tests, Perl TAP (Test Anything Protocol) tests, and a manual testing guide. All automated tests use standard PostgreSQL testing infrastructure and work on both macOS and Linux.
 
 ### Prerequisites
 
@@ -431,7 +431,7 @@ Beyond the build requirements (C compiler, `pg_config`), the test suites need th
 sudo apt-get install postgresql-server-dev-17 libipc-run-perl
 ```
 
-Replace `17` with your PostgreSQL major version (e.g., `18`). The `postgresql-server-dev-*` package provides `pg_regress`, the `PostgreSQL::Test::Cluster` and `PostgreSQL::Test::Utils` Perl modules, and the PGXS Makefile infrastructure. `libipc-run-perl` provides the `IPC::Run` module required by the TAP harness.
+Replace `17` with your PostgreSQL major version (e.g., `18`). The `postgresql-server-dev-*` package provides `pg_regress`, the `PostgreSQL::Test::Cluster` and `PostgreSQL::Test::Utils` Perl modules, and the PGXS (PostgreSQL Extension Build Infrastructure) Makefile infrastructure. `libipc-run-perl` provides the `IPC::Run` module required by the TAP harness.
 
 **Fedora / RHEL / Rocky:**
 
@@ -594,7 +594,7 @@ cd build
 meson test --suite pg_enhanced_query_logging
 ```
 
-### CI/CD
+### CI/CD (Continuous Integration / Continuous Delivery)
 
 A GitHub Actions workflow (`.github/workflows/test.yml`) runs both test suites automatically on every push and pull request. The CI matrix covers:
 
