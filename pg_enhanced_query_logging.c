@@ -23,6 +23,7 @@
  */
 #include "postgres.h"
 
+#include "access/xact.h"
 #include <fcntl.h>
 #include <limits.h>
 #include <math.h>
@@ -173,6 +174,9 @@ static bool peql_track_memory = false;
 /* Track wait events via periodic sampling (experimental). */
 static bool peql_track_wait_events = false;
 
+/* Log at transaction boundary instead of per-statement. */
+static bool peql_log_transaction = false;
+
 /* Track planning time separately from execution time. */
 static bool peql_track_planning = false;
 
@@ -226,6 +230,21 @@ static PeqlWaitEventSample peql_wait_samples[PEQL_MAX_WAIT_EVENTS];
 static int peql_wait_sample_count = 0;
 static bool peql_wait_sampling_active = false;
 static TimeoutId peql_wait_timeout_id = MAX_TIMEOUTS;
+
+/* ---------- Transaction-aware logging accumulator ----------------------- */
+
+typedef struct PeqlTxnAccumulator
+{
+	double			total_duration_ms;
+	uint64			total_rows_sent;
+	double			total_rows_examined;
+	uint64			total_rows_affected;
+	int				statement_count;
+	StringInfoData	query_texts;
+	bool			active;
+} PeqlTxnAccumulator;
+
+static PeqlTxnAccumulator peql_txn_accum;
 
 /*
  * Per-table I/O attribution: tracks buffer hits and reads for each
@@ -337,6 +356,11 @@ static void peql_wait_event_sample_handler(void);
 static void peql_start_wait_sampling(void);
 static void peql_stop_wait_sampling(void);
 static void peql_format_wait_events(StringInfo buf);
+
+/* Transaction-aware logging. */
+static void peql_xact_callback(XactEvent event, void *arg);
+static void peql_txn_accum_reset(void);
+static void peql_write_txn_log_entry(void);
 
 /* Parameter formatting helper. */
 static void peql_append_params(StringInfo buf, ParamListInfo params);
@@ -631,6 +655,18 @@ _PG_init(void)
 							 0,
 							 NULL, NULL, NULL);
 
+	/* ---- GUC: peql.log_transaction ---- */
+	DefineCustomBoolVariable("peql.log_transaction",
+							 "Log at transaction boundary instead of per-statement.",
+							 "When enabled, metrics are accumulated across all "
+							 "statements in an explicit transaction block and a "
+							 "single aggregated entry is written at COMMIT/ROLLBACK.",
+							 &peql_log_transaction,
+							 false,
+							 PGC_SUSET,
+							 0,
+							 NULL, NULL, NULL);
+
 	/* Reserve the "peql" GUC prefix so no other extension can claim it. */
 	MarkGUCPrefixReserved("peql");
 
@@ -665,6 +701,9 @@ _PG_init(void)
 	/* ---- Install ProcessUtility hook (for DDL/utility logging) ---- */
 	prev_ProcessUtility  = ProcessUtility_hook;
 	ProcessUtility_hook  = peql_ProcessUtility;
+
+	/* ---- Register transaction callback (for transaction-aware logging) ---- */
+	RegisterXactCallback(peql_xact_callback, NULL);
 }
 
 void
@@ -886,6 +925,112 @@ peql_format_wait_events(StringInfo buf)
 	}
 
 	appendStringInfoChar(buf, '\n');
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
+ * Transaction-aware logging
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static void
+peql_txn_accum_reset(void)
+{
+	peql_txn_accum.total_duration_ms = 0.0;
+	peql_txn_accum.total_rows_sent = 0;
+	peql_txn_accum.total_rows_examined = 0.0;
+	peql_txn_accum.total_rows_affected = 0;
+	peql_txn_accum.statement_count = 0;
+	peql_txn_accum.active = false;
+
+	if (peql_txn_accum.query_texts.data)
+		resetStringInfo(&peql_txn_accum.query_texts);
+	else
+		initStringInfo(&peql_txn_accum.query_texts);
+}
+
+static void
+peql_write_txn_log_entry(void)
+{
+	MemoryContext oldcxt;
+	MemoryContext logcxt;
+
+	logcxt = AllocSetContextCreate(CurrentMemoryContext,
+								   "peql txn log entry",
+								   ALLOCSET_DEFAULT_SIZES);
+	oldcxt = MemoryContextSwitchTo(logcxt);
+
+	PG_TRY();
+	{
+		StringInfoData	buf;
+		pg_time_t		stamp_time;
+		double			duration_sec;
+
+		initStringInfo(&buf);
+
+		duration_sec = peql_txn_accum.total_duration_ms / 1000.0;
+
+		stamp_time = peql_format_header(&buf, peql_txn_accum.total_duration_ms);
+
+		if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_STANDARD)
+		{
+			const char *db = NULL;
+
+			if (MyProcPort)
+				db = MyProcPort->database_name;
+			if (db == NULL) db = "";
+
+			appendStringInfo(&buf, "# Thread_id: %d  Schema: %s  Statements: %d\n",
+							 MyProcPid, db,
+							 peql_txn_accum.statement_count);
+		}
+
+		appendStringInfo(&buf,
+						 "# Query_time: %f  Lock_time: 0.000000"
+						 "  Rows_sent: " UINT64_FORMAT
+						 "  Rows_examined: %.0f\n",
+						 duration_sec,
+						 peql_txn_accum.total_rows_sent,
+						 peql_txn_accum.total_rows_examined);
+
+		appendStringInfo(&buf, "SET timestamp=" INT64_FORMAT ";\n",
+						 (int64) stamp_time -
+						 lround(peql_txn_accum.total_duration_ms / 1000.0));
+
+		appendStringInfoString(&buf, peql_txn_accum.query_texts.data);
+		if (buf.len > 0 && buf.data[buf.len - 1] != '\n')
+			appendStringInfoChar(&buf, '\n');
+
+		peql_flush_to_file(buf.data, buf.len);
+		peql_queries_logged++;
+		peql_bytes_written += buf.len;
+		peql_adaptive_record(buf.len);
+	}
+	PG_CATCH();
+	{
+		FlushErrorState();
+		ereport(LOG,
+				(errmsg("peql: error while writing transaction log entry, skipping")));
+	}
+	PG_END_TRY();
+
+	MemoryContextSwitchTo(oldcxt);
+	MemoryContextDelete(logcxt);
+}
+
+static void
+peql_xact_callback(XactEvent event, void *arg)
+{
+	if (!peql_txn_accum.active)
+		return;
+
+	if (event == XACT_EVENT_COMMIT || event == XACT_EVENT_ABORT)
+	{
+		if (peql_txn_accum.total_duration_ms >= peql_log_min_duration &&
+			peql_should_log(peql_txn_accum.total_duration_ms))
+			peql_write_txn_log_entry();
+
+		peql_txn_accum_reset();
+	}
 }
 
 /*
@@ -1143,7 +1288,36 @@ peql_ExecutorEnd(QueryDesc *queryDesc)
 
 		msec = queryDesc->totaltime->total * 1000.0;
 
-		if (msec >= peql_log_min_duration)
+		if (peql_log_transaction && IsTransactionBlock())
+		{
+			/*
+			 * Transaction-aware mode: accumulate instead of writing.
+			 * We accumulate all queries regardless of the per-query
+			 * duration threshold; the threshold is checked against the
+			 * total transaction duration at commit time.
+			 */
+			if (!peql_txn_accum.active)
+			{
+				peql_txn_accum_reset();
+				peql_txn_accum.active = true;
+			}
+
+			peql_txn_accum.total_duration_ms += msec;
+			peql_txn_accum.total_rows_sent += queryDesc->estate->es_processed;
+			peql_txn_accum.statement_count++;
+
+			if (queryDesc->sourceText)
+			{
+				if (peql_txn_accum.query_texts.len > 0)
+					appendStringInfoString(&peql_txn_accum.query_texts, "\n");
+				appendStringInfoString(&peql_txn_accum.query_texts,
+									   queryDesc->sourceText);
+				if (peql_txn_accum.query_texts.len > 0 &&
+					peql_txn_accum.query_texts.data[peql_txn_accum.query_texts.len - 1] != ';')
+					appendStringInfoChar(&peql_txn_accum.query_texts, ';');
+			}
+		}
+		else if (msec >= peql_log_min_duration)
 		{
 			if (peql_should_log(msec))
 				peql_write_log_entry(queryDesc, msec);

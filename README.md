@@ -118,6 +118,7 @@ All GUC (Grand Unified Configuration) variables are prefixed with `peql.` and ca
 |-----|------|---------|---------|-------------|
 | `peql.log_utility` | bool | `off` | SUSET | Log utility (DDL) statements via the ProcessUtility hook |
 | `peql.log_nested` | bool | `off` | SUSET | Log statements nested inside PL/pgSQL functions and procedures |
+| `peql.log_transaction` | bool | `off` | SUSET | Log at transaction boundary, aggregating metrics across all statements |
 
 ### Rate Limiting
 
