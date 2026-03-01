@@ -47,6 +47,7 @@
 #include "nodes/params.h"
 #include "optimizer/planner.h"
 #include "parser/analyze.h"
+#include "parser/parsetree.h"
 #include "pgtime.h"
 #include "postmaster/syslogger.h"
 #include "port/atomics.h"
@@ -206,6 +207,19 @@ static double peql_current_plan_time_ms = 0.0;
 static int64 peql_current_query_id = 0;
 
 /*
+ * Per-table I/O attribution: tracks buffer hits and reads for each
+ * table (relation OID) seen during a plan-tree walk.
+ */
+#define PEQL_MAX_TABLE_IO	32
+
+typedef struct PeqlTableIO
+{
+	Oid		relid;
+	int64	blks_hit;
+	int64	blks_read;
+} PeqlTableIO;
+
+/*
  * Context passed through the plan-tree walker to collect plan quality
  * indicators (Full_scan, Filesort, Temp_table) and accurate Rows_examined.
  */
@@ -217,6 +231,9 @@ typedef struct PeqlPlanMetrics
 	bool	has_temp_table;
 	bool	has_temp_on_disk;
 	double	rows_examined;
+	EState *estate;
+	PeqlTableIO	table_io[PEQL_MAX_TABLE_IO];
+	int		table_io_count;
 } PeqlPlanMetrics;
 
 /* ---------- Hook infrastructure ------------------------------------------ */
@@ -1157,8 +1174,46 @@ peql_plan_walker(PlanState *planstate, void *context)
 		case T_CustomScanState:
 		case T_SampleScanState:
 			if (planstate->instrument)
+			{
 				m->rows_examined += planstate->instrument->ntuples
 								  + planstate->instrument->tuplecount;
+
+				/* Collect per-table I/O when EState is available. */
+				if (m->estate)
+				{
+					Scan   *scan = (Scan *) planstate->plan;
+					Index	scanrelid = scan->scanrelid;
+
+					if (scanrelid > 0)
+					{
+						RangeTblEntry *rte = exec_rt_fetch(scanrelid, m->estate);
+						Oid		relid = rte->relid;
+						int64	hit  = planstate->instrument->bufusage.shared_blks_hit;
+						int64	read = planstate->instrument->bufusage.shared_blks_read;
+						int		i;
+						bool	found = false;
+
+						for (i = 0; i < m->table_io_count; i++)
+						{
+							if (m->table_io[i].relid == relid)
+							{
+								m->table_io[i].blks_hit  += hit;
+								m->table_io[i].blks_read += read;
+								found = true;
+								break;
+							}
+						}
+
+						if (!found && m->table_io_count < PEQL_MAX_TABLE_IO)
+						{
+							m->table_io[m->table_io_count].relid     = relid;
+							m->table_io[m->table_io_count].blks_hit  = hit;
+							m->table_io[m->table_io_count].blks_read = read;
+							m->table_io_count++;
+						}
+					}
+				}
+			}
 			break;
 		default:
 			break;
@@ -1197,6 +1252,9 @@ static void
 peql_collect_plan_metrics(QueryDesc *queryDesc, PeqlPlanMetrics *metrics)
 {
 	memset(metrics, 0, sizeof(PeqlPlanMetrics));
+
+	if (peql_log_verbosity >= PEQL_LOG_VERBOSITY_FULL)
+		metrics->estate = queryDesc->estate;
 
 	if (queryDesc->planstate)
 		(void) peql_plan_walker(queryDesc->planstate, metrics);
@@ -1512,6 +1570,73 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 							 (bu->temp_blks_written > 0) ? "Yes" : "No",
 							 plan_metrics.has_sort ? "Yes" : "No",
 							 plan_metrics.has_sort_on_disk ? "Yes" : "No");
+		}
+
+		/* ---- Per-table I/O attribution ---- */
+		if (have_plan_metrics && plan_metrics.table_io_count > 0)
+		{
+			int		n = plan_metrics.table_io_count;
+			int		i, j;
+
+			/* Sort by total I/O (hit + read) descending via simple selection sort. */
+			for (i = 0; i < n - 1; i++)
+			{
+				int max_idx = i;
+				int64 max_io = plan_metrics.table_io[i].blks_hit +
+							   plan_metrics.table_io[i].blks_read;
+
+				for (j = i + 1; j < n; j++)
+				{
+					int64 io = plan_metrics.table_io[j].blks_hit +
+							   plan_metrics.table_io[j].blks_read;
+					if (io > max_io)
+					{
+						max_io = io;
+						max_idx = j;
+					}
+				}
+				if (max_idx != i)
+				{
+					PeqlTableIO tmp = plan_metrics.table_io[i];
+					plan_metrics.table_io[i] = plan_metrics.table_io[max_idx];
+					plan_metrics.table_io[max_idx] = tmp;
+				}
+			}
+
+			appendStringInfoString(buf, "# Table_io:");
+
+			for (i = 0; i < n && i < 5; i++)
+			{
+				const char *relname = NULL;
+				const char *nspname = NULL;
+
+				PG_TRY();
+				{
+					relname = get_rel_name(plan_metrics.table_io[i].relid);
+					if (relname)
+						nspname = get_namespace_name(
+									get_rel_namespace(plan_metrics.table_io[i].relid));
+				}
+				PG_CATCH();
+				{
+					FlushErrorState();
+					relname = NULL;
+					nspname = NULL;
+				}
+				PG_END_TRY();
+
+				if (relname)
+				{
+					appendStringInfo(buf, " %s.%s (hit=" INT64_FORMAT " read=" INT64_FORMAT ")",
+									 nspname ? nspname : "???",
+									 relname,
+									 plan_metrics.table_io[i].blks_hit,
+									 plan_metrics.table_io[i].blks_read);
+					if (i < n - 1 && i < 4)
+						appendStringInfoChar(buf, ',');
+				}
+			}
+			appendStringInfoChar(buf, '\n');
 		}
 
 		/* ---- JIT metrics ---- */

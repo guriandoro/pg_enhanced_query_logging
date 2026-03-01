@@ -269,6 +269,7 @@ SELECT * FROM orders WHERE status = 'pending';
 | `Temp_table_on_disk` | `temp_blks_written > 0` | full | Whether temp data spilled to disk |
 | `Filesort` | Plan tree (Sort) | full | Whether a sort operation was performed |
 | `Filesort_on_disk` | Tuplesort stats | full | Whether the sort spilled to disk |
+| `Table_io` | Per-node `BufferUsage` | full | Per-table I/O attribution showing buffer hits and reads for the top 5 tables |
 | `Mem_allocated` | `MemoryContextMemAllocated()` | full | Bytes allocated in the query memory context (requires `peql.track_memory`) |
 | `JIT_functions` | `JitInstrumentation` | full | Number of JIT-compiled functions |
 | `JIT_generation_time` | `JitInstrumentation` | full | Time spent generating JIT code (seconds) |
