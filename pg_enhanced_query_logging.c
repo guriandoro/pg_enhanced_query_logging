@@ -49,7 +49,11 @@
 #include "parser/analyze.h"
 #include "pgtime.h"
 #include "postmaster/syslogger.h"
+#include "port/atomics.h"
 #include "storage/fd.h"
+#include "storage/ipc.h"
+#include "storage/lwlock.h"
+#include "storage/shmem.h"
 #include "tcop/dest.h"
 #include "tcop/utility.h"
 #include "utils/guc.h"
@@ -130,6 +134,14 @@ static int peql_rate_limit_type = PEQL_RATE_LIMIT_QUERY;
  */
 static int peql_rate_limit_always_log_duration = 10000;
 
+/*
+ * Adaptive rate limiting: global (shared-memory-backed) throttles that
+ * limit how many queries or bytes are logged cluster-wide per second.
+ * 0 = disabled for each limit independently.
+ */
+static int peql_rate_limit_auto_max_queries = 0;
+static int peql_rate_limit_auto_max_bytes   = 0;
+
 /* Log bind parameter values in the log entry. */
 static bool peql_log_parameter_values = false;
 
@@ -172,6 +184,20 @@ static int64 peql_bytes_written   = 0;
  */
 static bool peql_session_decided = false;
 static bool peql_session_is_sampled = false;
+
+/* ---------- Shared memory state for adaptive rate limiting --------------- */
+
+typedef struct PeqlSharedState
+{
+	pg_atomic_uint64	queries_this_window;
+	pg_atomic_uint64	bytes_this_window;
+	pg_atomic_uint64	window_start_usec;
+} PeqlSharedState;
+
+static PeqlSharedState *peql_shared = NULL;
+
+static shmem_request_hook_type prev_shmem_request_hook = NULL;
+static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
 /* ---------- Per-query planning time (set by planner hook) ---------------- */
 static double peql_current_plan_time_ms = 0.0;
@@ -219,6 +245,10 @@ static ExecutorFinish_hook_type     prev_ExecutorFinish  = NULL;
 static ExecutorEnd_hook_type        prev_ExecutorEnd     = NULL;
 static ProcessUtility_hook_type     prev_ProcessUtility  = NULL;
 
+/* Forward declarations for shared memory hooks. */
+static void peql_shmem_request(void);
+static void peql_shmem_startup(void);
+
 /* Forward declarations for hook functions. */
 static void peql_post_parse_analyze(ParseState *pstate, Query *query,
 									JumbleState *jstate);
@@ -256,6 +286,8 @@ static void peql_flush_to_file(const char *data, int len);
 
 /* Rate limiting. */
 static bool peql_should_log(double duration_ms);
+static bool peql_adaptive_check(void);
+static void peql_adaptive_record(int bytes);
 
 /* Plan-tree analysis. */
 static bool peql_plan_walker(PlanState *planstate, void *context);
@@ -440,6 +472,32 @@ _PG_init(void)
 							GUC_UNIT_MS,
 							NULL, NULL, NULL);
 
+	/* ---- GUC: peql.rate_limit_auto_max_queries ---- */
+	DefineCustomIntVariable("peql.rate_limit_auto_max_queries",
+							"Max queries/second to log cluster-wide (0=off).",
+							"Adaptive rate limit using shared memory counters. "
+							"When the cluster-wide query count within a 1-second "
+							"window exceeds this value, further entries are suppressed.",
+							&peql_rate_limit_auto_max_queries,
+							0,
+							0, INT_MAX,
+							PGC_SUSET,
+							0,
+							NULL, NULL, NULL);
+
+	/* ---- GUC: peql.rate_limit_auto_max_bytes ---- */
+	DefineCustomIntVariable("peql.rate_limit_auto_max_bytes",
+							"Max bytes/second to log cluster-wide (0=off).",
+							"Adaptive rate limit using shared memory counters. "
+							"When the cluster-wide bytes written within a 1-second "
+							"window exceeds this value, further entries are suppressed.",
+							&peql_rate_limit_auto_max_bytes,
+							0,
+							0, INT_MAX,
+							PGC_SUSET,
+							0,
+							NULL, NULL, NULL);
+
 	/* ---- GUC: peql.log_parameter_values ---- */
 	DefineCustomBoolVariable("peql.log_parameter_values",
 							 "Log bind parameter values.",
@@ -520,6 +578,13 @@ _PG_init(void)
 	/* Reserve the "peql" GUC prefix so no other extension can claim it. */
 	MarkGUCPrefixReserved("peql");
 
+	/* ---- Install shared memory hooks (for adaptive rate limiting) ---- */
+	prev_shmem_request_hook = shmem_request_hook;
+	shmem_request_hook      = peql_shmem_request;
+
+	prev_shmem_startup_hook = shmem_startup_hook;
+	shmem_startup_hook      = peql_shmem_startup;
+
 	/* ---- Install post_parse_analyze hook (for Query_id capture) ---- */
 	prev_post_parse_analyze  = post_parse_analyze_hook;
 	post_parse_analyze_hook  = peql_post_parse_analyze;
@@ -549,6 +614,8 @@ _PG_init(void)
 void
 _PG_fini(void)
 {
+	shmem_request_hook      = prev_shmem_request_hook;
+	shmem_startup_hook      = prev_shmem_startup_hook;
 	post_parse_analyze_hook = prev_post_parse_analyze;
 	planner_hook        = prev_planner;
 	ExecutorStart_hook  = prev_ExecutorStart;
@@ -556,6 +623,117 @@ _PG_fini(void)
 	ExecutorFinish_hook = prev_ExecutorFinish;
 	ExecutorEnd_hook    = prev_ExecutorEnd;
 	ProcessUtility_hook = prev_ProcessUtility;
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
+ * Shared memory hooks
+ *
+ * Request and initialise a small shared memory segment for the adaptive
+ * rate limiter's cluster-wide counters.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static void
+peql_shmem_request(void)
+{
+	if (prev_shmem_request_hook)
+		prev_shmem_request_hook();
+
+	RequestAddinShmemSpace(MAXALIGN(sizeof(PeqlSharedState)));
+}
+
+static void
+peql_shmem_startup(void)
+{
+	bool	found;
+
+	if (prev_shmem_startup_hook)
+		prev_shmem_startup_hook();
+
+	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
+
+	peql_shared = ShmemInitStruct("pg_enhanced_query_logging",
+								  sizeof(PeqlSharedState),
+								  &found);
+
+	if (!found)
+	{
+		pg_atomic_init_u64(&peql_shared->queries_this_window, 0);
+		pg_atomic_init_u64(&peql_shared->bytes_this_window, 0);
+		pg_atomic_init_u64(&peql_shared->window_start_usec,
+						   (uint64) GetCurrentTimestamp());
+	}
+
+	LWLockRelease(AddinShmemInitLock);
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
+ * Adaptive rate limiter helpers
+ *
+ * peql_adaptive_check() returns false when the cluster-wide query or byte
+ * count within the current 1-second window has reached the configured
+ * maximum.  A racing window reset is handled with compare-exchange.
+ *
+ * peql_adaptive_record() increments the shared counters after a log
+ * entry has been written.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+static void
+peql_adaptive_maybe_reset_window(void)
+{
+	uint64	now_usec = (uint64) GetCurrentTimestamp();
+	uint64	window_start;
+
+	window_start = pg_atomic_read_u64(&peql_shared->window_start_usec);
+
+	if (now_usec - window_start >= 1000000)
+	{
+		if (pg_atomic_compare_exchange_u64(&peql_shared->window_start_usec,
+										   &window_start, now_usec))
+		{
+			pg_atomic_write_u64(&peql_shared->queries_this_window, 0);
+			pg_atomic_write_u64(&peql_shared->bytes_this_window, 0);
+		}
+	}
+}
+
+static bool
+peql_adaptive_check(void)
+{
+	if (peql_shared == NULL)
+		return true;
+
+	if (peql_rate_limit_auto_max_queries <= 0 &&
+		peql_rate_limit_auto_max_bytes <= 0)
+		return true;
+
+	peql_adaptive_maybe_reset_window();
+
+	if (peql_rate_limit_auto_max_queries > 0 &&
+		pg_atomic_read_u64(&peql_shared->queries_this_window) >=
+		(uint64) peql_rate_limit_auto_max_queries)
+		return false;
+
+	if (peql_rate_limit_auto_max_bytes > 0 &&
+		pg_atomic_read_u64(&peql_shared->bytes_this_window) >=
+		(uint64) peql_rate_limit_auto_max_bytes)
+		return false;
+
+	return true;
+}
+
+static void
+peql_adaptive_record(int bytes)
+{
+	if (peql_shared == NULL)
+		return;
+
+	if (peql_rate_limit_auto_max_queries > 0)
+		pg_atomic_fetch_add_u64(&peql_shared->queries_this_window, 1);
+
+	if (peql_rate_limit_auto_max_bytes > 0)
+		pg_atomic_fetch_add_u64(&peql_shared->bytes_this_window, (uint64) bytes);
 }
 
 /*
@@ -758,11 +936,11 @@ peql_should_log(double duration_ms)
 	/* Always-log override: very slow queries bypass the rate limiter. (-1 = disabled) */
 	if (peql_rate_limit_always_log_duration >= 0 &&
 		duration_ms >= peql_rate_limit_always_log_duration)
-		return true;
+		return peql_adaptive_check();
 
 	/* No rate limiting when rate_limit == 1 (log everything). */
 	if (peql_rate_limit <= 1)
-		return true;
+		return peql_adaptive_check();
 
 	if (peql_rate_limit_type == PEQL_RATE_LIMIT_SESSION)
 	{
@@ -773,14 +951,18 @@ peql_should_log(double duration_ms)
 			peql_session_is_sampled = (r == 0);
 			peql_session_decided = true;
 		}
-		return peql_session_is_sampled;
+		if (!peql_session_is_sampled)
+			return false;
+		return peql_adaptive_check();
 	}
 
 	/* PEQL_RATE_LIMIT_QUERY: per-query draw. */
 	{
 		uint32 r = (uint32) (pg_prng_uint64(&pg_global_prng_state)
 							 % (uint64) peql_rate_limit);
-		return (r == 0);
+		if (r != 0)
+			return false;
+		return peql_adaptive_check();
 	}
 }
 
@@ -1378,6 +1560,15 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 						 peql_rate_limit);
 	}
 
+	if (peql_rate_limit_auto_max_queries > 0 || peql_rate_limit_auto_max_bytes > 0)
+	{
+		appendStringInfo(buf,
+						 "# Log_slow_rate_auto_max_queries: %d"
+						 "  Log_slow_rate_auto_max_bytes: %d\n",
+						 peql_rate_limit_auto_max_queries,
+						 peql_rate_limit_auto_max_bytes);
+	}
+
 	/* ---- SET timestamp line (query start time, not completion time) ---- */
 	appendStringInfo(buf, "SET timestamp=" INT64_FORMAT ";\n",
 					 (int64) stamp_time - lround(duration_ms / 1000.0));
@@ -1658,6 +1849,15 @@ peql_format_utility_entry(StringInfo buf, const char *queryString,
 						 peql_rate_limit);
 	}
 
+	if (peql_rate_limit_auto_max_queries > 0 || peql_rate_limit_auto_max_bytes > 0)
+	{
+		appendStringInfo(buf,
+						 "# Log_slow_rate_auto_max_queries: %d"
+						 "  Log_slow_rate_auto_max_bytes: %d\n",
+						 peql_rate_limit_auto_max_queries,
+						 peql_rate_limit_auto_max_bytes);
+	}
+
 	/* SET timestamp reflects query start time, not completion time. */
 	appendStringInfo(buf, "SET timestamp=" INT64_FORMAT ";\n",
 					 (int64) stamp_time - lround(duration_ms / 1000.0));
@@ -1699,6 +1899,7 @@ peql_write_log_entry(QueryDesc *queryDesc, double duration_ms)
 		peql_flush_to_file(buf.data, buf.len);
 		peql_queries_logged++;
 		peql_bytes_written += buf.len;
+		peql_adaptive_record(buf.len);
 	}
 	PG_CATCH();
 	{
@@ -1736,6 +1937,7 @@ peql_write_utility_log_entry(const char *queryString, double duration_ms,
 		peql_flush_to_file(buf.data, buf.len);
 		peql_queries_logged++;
 		peql_bytes_written += buf.len;
+		peql_adaptive_record(buf.len);
 	}
 	PG_CATCH();
 	{

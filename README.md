@@ -126,6 +126,8 @@ All GUC (Grand Unified Configuration) variables are prefixed with `peql.` and ca
 | `peql.rate_limit` | int | `1` | SUSET | Log every Nth query or session. `1` = log all eligible queries |
 | `peql.rate_limit_type` | enum | `query` | SUSET | Sampling mode: `session` (decide once per backend) or `query` (decide per statement) |
 | `peql.rate_limit_always_log_duration` | int (ms) | `10000` | SUSET | Queries slower than this bypass the rate limiter entirely. `0` = bypass for all queries, `-1` = disabled |
+| `peql.rate_limit_auto_max_queries` | int | `0` | SUSET | Max queries/second to log cluster-wide (shared memory). `0` = disabled |
+| `peql.rate_limit_auto_max_bytes` | int | `0` | SUSET | Max bytes/second to log cluster-wide (shared memory). `0` = disabled |
 
 ### Extended Tracking
 
@@ -275,6 +277,8 @@ SELECT * FROM orders WHERE status = 'pending';
 | `JIT_emission_time` | `JitInstrumentation` | full | Time spent emitting JIT code (seconds) |
 | `Log_slow_rate_type` | GUC | all (when sampling) | Rate limit mode (`session` or `query`) |
 | `Log_slow_rate_limit` | GUC | all (when sampling) | Configured rate limit value |
+| `Log_slow_rate_auto_max_queries` | GUC | all (when adaptive) | Configured max queries/second cluster-wide |
+| `Log_slow_rate_auto_max_bytes` | GUC | all (when adaptive) | Configured max bytes/second cluster-wide |
 
 ### Key Naming Conventions
 
