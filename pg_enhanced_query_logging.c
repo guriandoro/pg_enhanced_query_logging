@@ -1357,6 +1357,16 @@ peql_ProcessUtility(PlannedStmt *pstmt,
 {
 	instr_time	start;
 	bool		do_log;
+	bool		is_execute;
+
+	/*
+	 * EXECUTE dispatches to the executor internally.  Don't bump the
+	 * nesting level so the inner executor call sees nesting_level == 0
+	 * and peql_active() returns true -- this lets the executor-level
+	 * hooks log the underlying query together with its bound parameter
+	 * values (which are only available in queryDesc->params).
+	 */
+	is_execute = IsA(pstmt->utilityStmt, ExecuteStmt);
 
 	do_log = peql_log_utility && peql_enabled && peql_log_min_duration >= 0 &&
 		(nesting_level == 0 || peql_log_nested);
@@ -1364,7 +1374,8 @@ peql_ProcessUtility(PlannedStmt *pstmt,
 	if (do_log)
 		INSTR_TIME_SET_CURRENT(start);
 
-	nesting_level++;
+	if (!is_execute)
+		nesting_level++;
 	PG_TRY();
 	{
 		if (prev_ProcessUtility)
@@ -1376,7 +1387,8 @@ peql_ProcessUtility(PlannedStmt *pstmt,
 	}
 	PG_FINALLY();
 	{
-		nesting_level--;
+		if (!is_execute)
+			nesting_level--;
 	}
 	PG_END_TRY();
 
