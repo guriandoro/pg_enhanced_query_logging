@@ -369,11 +369,14 @@ SELECT 6; SELECT 7; SELECT 8; SELECT 9; SELECT 10;
 SQL
 ```
 
-**Expected:** logged entries contain
-`# Log_slow_rate_type: query  Log_slow_rate_limit: 2`.
+**Expected:** logged entries contain all three rate-limit metadata fields:
+`# Log_slow_rate_type: query  Log_slow_rate_limit: 2  Log_slow_rate_limit_always_log_duration: 10000`
+
+The `always_log_duration` defaults to 10000 (ms) when not explicitly changed.
 
 ```bash
 grep "Log_slow_rate_type" $PGDATA/log/peql-slow.log
+grep "Log_slow_rate_limit_always_log_duration" $PGDATA/log/peql-slow.log
 ```
 
 ### 11.3 No rate limit metadata when rate_limit=1
@@ -401,7 +404,131 @@ SQL
 rate limit, because `always_log_duration = 0` means any query (duration >= 0)
 bypasses the limiter.
 
-### 11.5 Session-mode rate limiting
+### 11.5 Always-log-duration value in metadata
+
+```bash
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
+psql -d postgres <<'SQL'
+SET peql.rate_limit = 5;
+SET peql.rate_limit_always_log_duration = 2000;
+SELECT 1; SELECT 2; SELECT 3; SELECT 4; SELECT 5;
+SELECT 6; SELECT 7; SELECT 8; SELECT 9; SELECT 10;
+SQL
+
+grep "Log_slow_rate_limit_always_log_duration" $PGDATA/log/peql-slow.log
+```
+
+**Expected:** logged entries show
+`Log_slow_rate_limit_always_log_duration: 2000`, reflecting the custom
+threshold set for this session.
+
+### 11.6 Always-log-duration disabled (-1) in metadata
+
+```bash
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
+psql -d postgres <<'SQL'
+SET peql.rate_limit = 3;
+SET peql.rate_limit_always_log_duration = -1;
+SELECT 1; SELECT 2; SELECT 3; SELECT 4; SELECT 5;
+SQL
+
+grep "Log_slow_rate_limit_always_log_duration" $PGDATA/log/peql-slow.log
+```
+
+**Expected:** logged entries show
+`Log_slow_rate_limit_always_log_duration: -1`, indicating the bypass
+feature is disabled.
+
+### 11.7 Auto rate limit metadata (max queries)
+
+```bash
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
+psql -d postgres <<'SQL'
+SET peql.rate_limit_auto_max_queries = 500;
+SELECT 'auto_max_queries_test';
+SQL
+
+grep "Log_slow_rate_auto_max_queries" $PGDATA/log/peql-slow.log
+```
+
+**Expected:** a metadata line containing
+`# Log_slow_rate_auto_max_queries: 500  Log_slow_rate_auto_max_bytes: 0`.
+The `auto_max_bytes` value is 0 because it was not set.
+
+### 11.8 Auto rate limit metadata (max bytes)
+
+```bash
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
+psql -d postgres <<'SQL'
+SET peql.rate_limit_auto_max_bytes = 1048576;
+SELECT 'auto_max_bytes_test';
+SQL
+
+grep "Log_slow_rate_auto_max_bytes" $PGDATA/log/peql-slow.log
+```
+
+**Expected:** a metadata line containing
+`# Log_slow_rate_auto_max_queries: 0  Log_slow_rate_auto_max_bytes: 1048576`.
+The `auto_max_queries` value is 0 because it was not set.
+
+### 11.9 Auto rate limit metadata (both max queries and max bytes)
+
+```bash
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
+psql -d postgres <<'SQL'
+SET peql.rate_limit_auto_max_queries = 200;
+SET peql.rate_limit_auto_max_bytes = 524288;
+SELECT 'auto_both_test';
+SQL
+
+grep "Log_slow_rate_auto" $PGDATA/log/peql-slow.log
+```
+
+**Expected:** a metadata line containing
+`# Log_slow_rate_auto_max_queries: 200  Log_slow_rate_auto_max_bytes: 524288`.
+
+### 11.10 No auto rate limit metadata when both are 0
+
+```bash
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
+psql -d postgres <<'SQL'
+SET peql.rate_limit_auto_max_queries = 0;
+SET peql.rate_limit_auto_max_bytes = 0;
+SELECT 'no_auto_meta';
+SQL
+
+grep "Log_slow_rate_auto" $PGDATA/log/peql-slow.log
+```
+
+**Expected:** no output from grep. The auto rate limit metadata line is
+omitted when both values are 0 (disabled).
+
+### 11.11 All rate limit GUCs in metadata simultaneously
+
+```bash
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
+psql -d postgres <<'SQL'
+SET peql.rate_limit = 3;
+SET peql.rate_limit_type = 'session';
+SET peql.rate_limit_always_log_duration = 5000;
+SET peql.rate_limit_auto_max_queries = 100;
+SET peql.rate_limit_auto_max_bytes = 262144;
+SELECT 'all_rate_gucs';
+SQL
+
+grep -E "Log_slow_rate" $PGDATA/log/peql-slow.log
+```
+
+**Expected:** two metadata lines appear together:
+
+```
+# Log_slow_rate_type: session  Log_slow_rate_limit: 3  Log_slow_rate_limit_always_log_duration: 5000
+# Log_slow_rate_auto_max_queries: 100  Log_slow_rate_auto_max_bytes: 262144
+```
+
+This confirms all five rate-limit GUC values are emitted in the output.
+
+### 11.12 Session-mode rate limiting
 
 ```bash
 psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
@@ -417,6 +544,27 @@ SQL
 **Expected:** either all three queries are logged (this session was sampled)
 or none are logged (this session was not sampled). There should be no mix of
 logged/not-logged within the same session.
+
+### 11.13 Rate limit metadata on utility statements
+
+```bash
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
+psql -d postgres <<'SQL'
+SET peql.log_utility = on;
+SET peql.rate_limit = 4;
+SET peql.rate_limit_type = 'query';
+SET peql.rate_limit_auto_max_queries = 300;
+CREATE TABLE rate_util_test (id int);
+DROP TABLE rate_util_test;
+SQL
+
+grep -E "Log_slow_rate" $PGDATA/log/peql-slow.log
+```
+
+**Expected:** both the rate-limit sampling metadata
+(`Log_slow_rate_type: query  Log_slow_rate_limit: 4  Log_slow_rate_limit_always_log_duration: ...`)
+and the auto rate-limit metadata (`Log_slow_rate_auto_max_queries: 300`)
+appear on DDL entries, not just on regular queries.
 
 ## 12. Test Utility Statement Logging
 
@@ -683,10 +831,16 @@ grep "Plan_time" $PGDATA/log/peql-slow.log
 | `Mem_allocated` appears                | When `peql.track_memory = on`                                         |
 | Verbosity levels work                  | `minimal` < `standard` < `full` produce progressively more fields     |
 | Rate limiting reduces entries          | `rate_limit=1000` logs far fewer than N out of N queries              |
-| Rate limit metadata in output          | `Log_slow_rate_type` / `Log_slow_rate_limit` present when sampling    |
+| Rate limit metadata in output          | `Log_slow_rate_type` / `Log_slow_rate_limit` / `Log_slow_rate_limit_always_log_duration` present when sampling |
 | No rate metadata when rate_limit=1     | `Log_slow_rate_type` absent when not sampling                         |
 | Session-mode rate limiting             | All-or-nothing logging per session                                    |
 | Always-log-duration override           | Very slow queries logged despite high rate_limit                      |
+| Always-log-duration value in metadata  | `Log_slow_rate_limit_always_log_duration` reflects the configured value |
+| Auto max queries metadata              | `Log_slow_rate_auto_max_queries` present when > 0                     |
+| Auto max bytes metadata                | `Log_slow_rate_auto_max_bytes` present when > 0                       |
+| No auto metadata when both are 0       | `Log_slow_rate_auto_*` lines absent when both values are 0            |
+| All rate GUCs in metadata together     | Both rate-limit metadata lines appear with all five GUC values        |
+| Rate metadata on utility statements    | Rate-limit metadata appears on DDL entries, not just regular queries  |
 | Utility logging (DDL)                  | DDL appears when `peql.log_utility = on`, absent when off             |
 | Nested statement logging               | Inner function statements appear when `peql.log_nested = on`          |
 | Parameter value logging                | `# Parameters:` line present when `peql.log_parameter_values = on`    |
