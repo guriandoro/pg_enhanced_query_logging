@@ -281,6 +281,7 @@ SELECT * FROM orders WHERE status = 'pending';
 | `JIT_emission_time` | `JitInstrumentation` | full | Time spent emitting JIT code (seconds) |
 | `Log_slow_rate_type` | GUC | all (when sampling) | Rate limit mode (`session` or `query`) |
 | `Log_slow_rate_limit` | GUC | all (when sampling) | Configured rate limit value |
+| `Log_slow_rate_limit_always_log_duration` | GUC | all (when sampling) | Duration threshold (ms) that bypasses the rate limiter (`-1` = disabled) |
 | `Log_slow_rate_auto_max_queries` | GUC | all (when adaptive) | Configured max queries/second cluster-wide |
 | `Log_slow_rate_auto_max_bytes` | GUC | all (when adaptive) | Configured max bytes/second cluster-wide |
 
@@ -343,7 +344,7 @@ diff before.txt after.txt
 
 ### Sampled Data
 
-When `peql.rate_limit > 1`, each log entry includes `Log_slow_rate_type` and `Log_slow_rate_limit` metadata. pt-query-digest can use this to extrapolate totals from sampled data.
+When `peql.rate_limit > 1`, each log entry includes `Log_slow_rate_type`, `Log_slow_rate_limit`, and `Log_slow_rate_limit_always_log_duration` metadata. pt-query-digest can use this to extrapolate totals from sampled data.
 
 ## Architecture
 
