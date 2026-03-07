@@ -68,7 +68,7 @@ SKIP: {
 	skip "no entries logged (unlikely but possible with sampling)", 1
 		unless $content =~ /^# Time:/m;
 
-	like($content, qr/^# Log_slow_rate_type: query\s+Log_slow_rate_limit: 2$/m,
+	like($content, qr/^# Log_slow_rate_type: query\s+Log_slow_rate_limit: 2\s+Log_slow_rate_limit_always_log_duration: \d+$/m,
 		"rate limit metadata appears in log output");
 }
 

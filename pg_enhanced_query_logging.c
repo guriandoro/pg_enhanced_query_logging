@@ -1996,10 +1996,12 @@ peql_format_entry(StringInfo buf, QueryDesc *queryDesc, double duration_ms)
 	if (peql_rate_limit > 1)
 	{
 		appendStringInfo(buf,
-						 "# Log_slow_rate_type: %s  Log_slow_rate_limit: %d\n",
+						 "# Log_slow_rate_type: %s  Log_slow_rate_limit: %d"
+						 "  Log_slow_rate_limit_always_log_duration: %d\n",
 						 (peql_rate_limit_type == PEQL_RATE_LIMIT_SESSION)
 						 ? "session" : "query",
-						 peql_rate_limit);
+						 peql_rate_limit,
+						 peql_rate_limit_always_log_duration);
 	}
 
 	if (peql_rate_limit_auto_max_queries > 0 || peql_rate_limit_auto_max_bytes > 0)
@@ -2285,10 +2287,12 @@ peql_format_utility_entry(StringInfo buf, const char *queryString,
 	if (peql_rate_limit > 1)
 	{
 		appendStringInfo(buf,
-						 "# Log_slow_rate_type: %s  Log_slow_rate_limit: %d\n",
+						 "# Log_slow_rate_type: %s  Log_slow_rate_limit: %d"
+						 "  Log_slow_rate_limit_always_log_duration: %d\n",
 						 (peql_rate_limit_type == PEQL_RATE_LIMIT_SESSION)
 						 ? "session" : "query",
-						 peql_rate_limit);
+						 peql_rate_limit,
+						 peql_rate_limit_always_log_duration);
 	}
 
 	if (peql_rate_limit_auto_max_queries > 0 || peql_rate_limit_auto_max_bytes > 0)
