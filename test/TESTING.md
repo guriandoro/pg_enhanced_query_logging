@@ -190,7 +190,7 @@ psql -d postgres -c "CREATE EXTENSION pg_enhanced_query_logging;"
 ### 6.1 Basic SELECT (Full_scan: Yes)
 
 ```bash
-psql -d postgres -c "SELECT generate_series(1, 10000);"
+psql -d postgres -c "SELECT generate_series(1, 10000);" > /dev/null
 ```
 
 **Expected:** log entry with `Full_scan: Yes`, `Filesort: No`,
@@ -199,7 +199,7 @@ psql -d postgres -c "SELECT generate_series(1, 10000);"
 ### 6.2 SELECT with ORDER BY (Filesort: Yes)
 
 ```bash
-psql -d postgres -c "SELECT generate_series(1, 10000) AS n ORDER BY n DESC;"
+psql -d postgres -c "SELECT generate_series(1, 10000) AS n ORDER BY n DESC;" > /dev/null
 ```
 
 **Expected:** `Filesort: Yes`, `Full_scan: Yes`.
@@ -207,7 +207,7 @@ psql -d postgres -c "SELECT generate_series(1, 10000) AS n ORDER BY n DESC;"
 ### 6.3 DML (Data Manipulation Language) -- CREATE TABLE AS, UPDATE, DELETE (Rows_affected)
 
 ```bash
-psql -d postgres <<'SQL'
+psql -d postgres > /dev/null <<'SQL'
 CREATE TABLE test_tbl AS SELECT generate_series(1, 1000) AS id;
 UPDATE test_tbl SET id = id + 1;
 DELETE FROM test_tbl WHERE id < 500;
@@ -221,7 +221,7 @@ nonzero values for operations touching real heap pages.
 ### 6.4 Query against a real table (buffer metrics)
 
 ```bash
-psql -d postgres <<'SQL'
+psql -d postgres > /dev/null <<'SQL'
 CREATE TABLE big_tbl AS SELECT generate_series(1, 100000) AS id, md5(random()::text) AS data;
 ANALYZE big_tbl;
 SELECT count(*) FROM big_tbl WHERE id > 50000;
@@ -234,7 +234,7 @@ SQL
 ### 6.5 Heavy query to trigger JIT (Just-In-Time compilation), if available
 
 ```bash
-psql -d postgres -c "SET jit_above_cost = 10; SELECT count(*), sum(id), avg(id) FROM generate_series(1, 1000000) AS id;"
+psql -d postgres -c "SET jit_above_cost = 10; SELECT count(*), sum(id), avg(id) FROM generate_series(1, 1000000) AS id;" > /dev/null
 ```
 
 **Expected:** if JIT fires, the log entry will include `JIT_functions`,
@@ -245,8 +245,8 @@ met, these lines simply won't appear.
 ### 6.6 Schema field (db.schema format)
 
 ```bash
-psql -d postgres -c "SET search_path = pg_catalog; SELECT 1;"
-psql -d postgres -c "SET search_path = public; SELECT 1;"
+psql -d postgres -c "SET search_path = pg_catalog; SELECT 1;" > /dev/null
+psql -d postgres -c "SET search_path = public; SELECT 1;" > /dev/null
 ```
 
 **Expected:** the `Schema` field changes between `postgres.pg_catalog` and
@@ -295,19 +295,19 @@ GUC variables marked `PGC_SUSET` can be changed per-session by superusers:
 
 ```bash
 # Switch to minimal verbosity (only timing + rows)
-psql -d postgres -c "SET peql.log_verbosity = 'minimal'; SELECT 1;"
+psql -d postgres -c "SET peql.log_verbosity = 'minimal'; SELECT 1;" > /dev/null
 
 # Switch to standard verbosity (adds Thread_id, Schema)
-psql -d postgres -c "SET peql.log_verbosity = 'standard'; SELECT 1;"
+psql -d postgres -c "SET peql.log_verbosity = 'standard'; SELECT 1;" > /dev/null
 
 # Disable logging temporarily
-psql -d postgres -c "SET peql.log_min_duration = -1; SELECT 1;"
+psql -d postgres -c "SET peql.log_min_duration = -1; SELECT 1;" > /dev/null
 
 # Only log queries slower than 500ms
-psql -d postgres -c "SET peql.log_min_duration = 500; SELECT pg_sleep(1);"
+psql -d postgres -c "SET peql.log_min_duration = 500; SELECT pg_sleep(1);" > /dev/null
 
 # Turn off plan-tree analysis overhead
-psql -d postgres -c "SET peql.log_verbosity = 'standard'; SELECT 1;"
+psql -d postgres -c "SET peql.log_verbosity = 'standard'; SELECT 1;" > /dev/null
 ```
 
 After each command, check the log file to verify that verbosity changes
@@ -320,7 +320,7 @@ take effect. Entries logged at `minimal` should have no buffer, WAL (Write-Ahead
 wc -l $PGDATA/log/peql-slow.log
 
 # Truncate it
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
 
 # Confirm it's empty
 wc -l $PGDATA/log/peql-slow.log
@@ -331,23 +331,23 @@ wc -l $PGDATA/log/peql-slow.log
 ### 11.1 Query-mode rate limiting
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
 
 # With rate_limit=1, all queries are logged
-psql -d postgres <<'SQL'
+psql -d postgres > /dev/null <<'SQL'
 SET peql.rate_limit = 1;
 SELECT 'rate_one_a';
 SELECT 'rate_one_b';
 SELECT 'rate_one_c';
 SQL
 
-wc -l $PGDATA/log/peql-slow.log
+grep -c '# Time:' $PGDATA/log/peql-slow.log
 ```
 
 **Expected:** at least 3 `# Time:` lines (one per query).
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
 
 # With rate_limit=1000, very few queries should be logged
 (echo "SET peql.rate_limit = 1000;";
@@ -360,8 +360,8 @@ psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
 ### 11.2 Rate limit metadata in output
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.rate_limit = 2;
 SET peql.rate_limit_type = 'query';
 SELECT 1; SELECT 2; SELECT 3; SELECT 4; SELECT 5;
@@ -382,8 +382,8 @@ grep "Log_slow_rate_limit_always_log_duration" $PGDATA/log/peql-slow.log
 ### 11.3 No rate limit metadata when rate_limit=1
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres -c "SET peql.rate_limit = 1; SELECT 'no_rate_meta';"
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres -c "SET peql.rate_limit = 1; SELECT 'no_rate_meta';" > /dev/null
 grep "Log_slow_rate_type" $PGDATA/log/peql-slow.log
 ```
 
@@ -392,8 +392,8 @@ grep "Log_slow_rate_type" $PGDATA/log/peql-slow.log
 ### 11.4 Always-log-duration bypasses rate limiter
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.rate_limit = 1000000;
 SET peql.rate_limit_always_log_duration = 0;
 SELECT pg_sleep(0.01);
@@ -407,8 +407,8 @@ bypasses the limiter.
 ### 11.5 Always-log-duration value in metadata
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.rate_limit = 5;
 SET peql.rate_limit_always_log_duration = 2000;
 SELECT 1; SELECT 2; SELECT 3; SELECT 4; SELECT 5;
@@ -425,8 +425,8 @@ threshold set for this session.
 ### 11.6 Always-log-duration disabled (-1) in metadata
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.rate_limit = 3;
 SET peql.rate_limit_always_log_duration = -1;
 SELECT 1; SELECT 2; SELECT 3; SELECT 4; SELECT 5;
@@ -442,8 +442,8 @@ feature is disabled.
 ### 11.7 Auto rate limit metadata (max queries)
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.rate_limit_auto_max_queries = 500;
 SELECT 'auto_max_queries_test';
 SQL
@@ -458,8 +458,8 @@ The `auto_max_bytes` value is 0 because it was not set.
 ### 11.8 Auto rate limit metadata (max bytes)
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.rate_limit_auto_max_bytes = 1048576;
 SELECT 'auto_max_bytes_test';
 SQL
@@ -474,8 +474,8 @@ The `auto_max_queries` value is 0 because it was not set.
 ### 11.9 Auto rate limit metadata (both max queries and max bytes)
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.rate_limit_auto_max_queries = 200;
 SET peql.rate_limit_auto_max_bytes = 524288;
 SELECT 'auto_both_test';
@@ -490,8 +490,8 @@ grep "Log_slow_rate_auto" $PGDATA/log/peql-slow.log
 ### 11.10 No auto rate limit metadata when both are 0
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.rate_limit_auto_max_queries = 0;
 SET peql.rate_limit_auto_max_bytes = 0;
 SELECT 'no_auto_meta';
@@ -506,8 +506,8 @@ omitted when both values are 0 (disabled).
 ### 11.11 All rate limit GUCs in metadata simultaneously
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.rate_limit = 3;
 SET peql.rate_limit_type = 'session';
 SET peql.rate_limit_always_log_duration = 5000;
@@ -531,8 +531,8 @@ This confirms all five rate-limit GUC values are emitted in the output.
 ### 11.12 Session-mode rate limiting
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.rate_limit = 2;
 SET peql.rate_limit_type = 'session';
 SELECT 'session_test_1';
@@ -548,8 +548,8 @@ logged/not-logged within the same session.
 ### 11.13 Rate limit metadata on utility statements
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_utility = on;
 SET peql.rate_limit = 4;
 SET peql.rate_limit_type = 'query';
@@ -571,8 +571,8 @@ appear on DDL entries, not just on regular queries.
 ### 12.1 DDL statements with log_utility = on
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_utility = on;
 CREATE TABLE util_test (id int);
 ALTER TABLE util_test ADD COLUMN name text;
@@ -587,8 +587,8 @@ grep -E "CREATE TABLE|ALTER TABLE|DROP TABLE" $PGDATA/log/peql-slow.log
 ### 12.2 DDL statements with log_utility = off
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_utility = off;
 CREATE TABLE util_test_off (id int);
 DROP TABLE util_test_off;
@@ -604,7 +604,7 @@ grep "util_test_off" $PGDATA/log/peql-slow.log
 ### 13.1 PL/pgSQL function with log_nested = off (default)
 
 ```bash
-psql -d postgres <<'SQL'
+psql -d postgres > /dev/null <<'SQL'
 CREATE OR REPLACE FUNCTION nested_test() RETURNS void AS $$
 BEGIN
   PERFORM 1;
@@ -614,8 +614,8 @@ END;
 $$ LANGUAGE plpgsql;
 SQL
 
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_nested = off;
 SELECT nested_test();
 SQL
@@ -629,8 +629,8 @@ The inner `PERFORM` statements do NOT appear.
 ### 13.2 PL/pgSQL function with log_nested = on
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_nested = on;
 SELECT nested_test();
 SQL
@@ -648,8 +648,8 @@ see `bugs_and_improvements/24_*`).
 ### 14.1 Prepared statements with log_parameter_values = on
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_parameter_values = on;
 PREPARE param_test (int, text) AS SELECT $1, $2;
 EXECUTE param_test(42, 'hello world');
@@ -665,8 +665,8 @@ appears after the query text.
 ### 14.2 NULL parameter values
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_parameter_values = on;
 PREPARE null_test (int, text) AS SELECT $1, $2;
 EXECUTE null_test(NULL, NULL);
@@ -681,8 +681,8 @@ grep "Parameters" $PGDATA/log/peql-slow.log
 ### 14.3 Parameters not logged when log_parameter_values = off
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_parameter_values = off;
 PREPARE noparams (int) AS SELECT $1;
 EXECUTE noparams(99);
@@ -699,8 +699,8 @@ grep "Parameters" $PGDATA/log/peql-slow.log
 ### 15.1 Text-format plan with log_query_plan = on
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_query_plan = on;
 SET peql.log_query_plan_format = 'text';
 SELECT count(*) FROM big_tbl WHERE id > 50000;
@@ -715,8 +715,8 @@ node types, actual rows, and timing.
 ### 15.2 JSON-format plan
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_query_plan = on;
 SET peql.log_query_plan_format = 'json';
 SELECT count(*) FROM big_tbl WHERE id > 50000;
@@ -730,8 +730,8 @@ grep -A 10 "# Plan:" $PGDATA/log/peql-slow.log
 ### 15.3 Plan not logged when log_query_plan = off
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_query_plan = off;
 SELECT count(*) FROM big_tbl WHERE id > 50000;
 SQL
@@ -746,8 +746,8 @@ grep "Plan:" $PGDATA/log/peql-slow.log
 ### 16.1 peql.enabled = off disables all logging
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres -c "SET peql.enabled = off; SELECT 'should_not_appear';"
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres -c "SET peql.enabled = off; SELECT 'should_not_appear';" > /dev/null
 grep "should_not_appear" $PGDATA/log/peql-slow.log
 ```
 
@@ -756,8 +756,8 @@ grep "should_not_appear" $PGDATA/log/peql-slow.log
 ### 16.2 peql.log_min_duration = -1 disables logging
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres -c "SET peql.log_min_duration = '-1'; SELECT 'also_hidden';"
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres -c "SET peql.log_min_duration = '-1'; SELECT 'also_hidden';" > /dev/null
 grep "also_hidden" $PGDATA/log/peql-slow.log
 ```
 
@@ -766,8 +766,8 @@ grep "also_hidden" $PGDATA/log/peql-slow.log
 ### 16.3 peql.log_min_duration threshold filtering
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_min_duration = 500;
 SELECT 'fast_query';
 SELECT pg_sleep(0.6);
@@ -782,8 +782,8 @@ below the 500ms threshold and is not logged.
 ## 17. Test Planning Time Tracking
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_verbosity = 'full';
 SET peql.track_planning = on;
 SELECT count(*) FROM big_tbl WHERE id > 50000;
@@ -795,8 +795,8 @@ grep "Plan_time" $PGDATA/log/peql-slow.log
 **Expected:** `# Plan_time:` line with a nonzero value.
 
 ```bash
-psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
-psql -d postgres <<'SQL'
+psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
+psql -d postgres > /dev/null <<'SQL'
 SET peql.log_verbosity = 'full';
 SET peql.track_planning = off;
 SELECT count(*) FROM big_tbl WHERE id > 50000;
@@ -854,10 +854,10 @@ grep "Plan_time" $PGDATA/log/peql-slow.log
 
 ```bash
 # Force disk-based sort (Filesort_on_disk: Yes)
-psql -d postgres -c "SET work_mem = '64kB'; SELECT * FROM generate_series(1, 100000) AS n ORDER BY n DESC;"
+psql -d postgres -c "SET work_mem = '64kB'; SELECT * FROM generate_series(1, 100000) AS n ORDER BY n DESC;" > /dev/null
 
 # Force temp-table on disk (Temp_table_on_disk: Yes)
-psql -d postgres -c "SET work_mem = '64kB'; WITH big AS (SELECT generate_series(1, 100000) AS n) SELECT count(*) FROM big;"
+psql -d postgres -c "SET work_mem = '64kB'; WITH big AS (SELECT generate_series(1, 100000) AS n) SELECT count(*) FROM big;" > /dev/null
 ```
 
 ## 20. Automated Tests
