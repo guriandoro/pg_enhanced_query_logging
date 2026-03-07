@@ -350,11 +350,9 @@ wc -l $PGDATA/log/peql-slow.log
 psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();"
 
 # With rate_limit=1000, very few queries should be logged
-psql -d postgres <<'SQL'
-SET peql.rate_limit = 1000;
-SET peql.rate_limit_type = 'query';
-SELECT generate_series(1, 200);
-SQL
+(echo "SET peql.rate_limit = 1000;";
+ echo "SET peql.rate_limit_type = 'query';";
+ for i in $(seq 1 200); do echo "SELECT $i;"; done) | psql -d postgres > /dev/null
 ```
 
 **Expected:** significantly fewer than 200 `# Time:` lines.
