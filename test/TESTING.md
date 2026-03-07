@@ -773,7 +773,7 @@ SELECT 'fast_query';
 SELECT pg_sleep(0.6);
 SQL
 
-grep -c "# Time:" $PGDATA/log/peql-slow.log
+grep -i "select" $PGDATA/log/peql-slow.log
 ```
 
 **Expected:** only 1 entry (the `pg_sleep` query). The fast `SELECT` is
