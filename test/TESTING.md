@@ -510,7 +510,7 @@ psql -d postgres -c "SELECT pg_enhanced_query_logging_reset();" > /dev/null
 psql -d postgres > /dev/null <<'SQL'
 SET peql.rate_limit = 3;
 SET peql.rate_limit_type = 'session';
-SET peql.rate_limit_always_log_duration = 5000;
+SET peql.rate_limit_always_log_duration = 0;
 SET peql.rate_limit_auto_max_queries = 100;
 SET peql.rate_limit_auto_max_bytes = 262144;
 SELECT 'all_rate_gucs';
@@ -522,7 +522,7 @@ grep -E "Log_slow_rate" $PGDATA/log/peql-slow.log
 **Expected:** two metadata lines appear together:
 
 ```
-# Log_slow_rate_type: session  Log_slow_rate_limit: 3  Log_slow_rate_limit_always_log_duration: 5000
+# Log_slow_rate_type: session  Log_slow_rate_limit: 3  Log_slow_rate_limit_always_log_duration: 0
 # Log_slow_rate_auto_max_queries: 100  Log_slow_rate_auto_max_bytes: 262144
 ```
 
