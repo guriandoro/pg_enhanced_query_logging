@@ -10,7 +10,7 @@
 set -euo pipefail
 
 CONTAINER_NAME="peql-pg18-test"
-PG_IMAGE="postgres:18beta1"
+PG_IMAGE="postgres:18.3"
 PG_PORT="${PEQL_PG_PORT:-15432}"
 PG_PASSWORD="${PEQL_PG_PASSWORD:-peqltest}"
 EXTENSION_DIR="/tmp/pg_enhanced_query_logging"
