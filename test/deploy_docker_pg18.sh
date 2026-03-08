@@ -30,10 +30,7 @@ ok()    { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
 fail()  { printf '\033[1;31m  ✗ %s\033[0m\n' "$*"; exit 1; }
 
 supports_storage_opt() {
-    local driver
-    driver=$(docker info --format '{{.Driver}}' 2>/dev/null)
-    [ "$driver" = "overlay2" ] &&
-        docker info --format '{{.DriverStatus}}' 2>/dev/null | grep -q "xfs"
+    docker run --rm --storage-opt size=1g busybox true >/dev/null 2>&1
 }
 
 wait_for_pg() {
