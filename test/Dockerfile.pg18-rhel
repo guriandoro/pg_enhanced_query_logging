@@ -43,7 +43,7 @@ RUN cd /tmp/pg_enhanced_query_logging && \
     rm -rf /tmp/pg_enhanced_query_logging
 
 RUN su - postgres -c " \
-    initdb --pgdata=${PGDATA} && \
+    /usr/pgsql-${PG_MAJOR}/bin/initdb --pgdata=${PGDATA} && \
     echo \"shared_preload_libraries = 'pg_enhanced_query_logging'\" >> ${PGDATA}/postgresql.conf && \
     echo \"peql.log_min_duration = 0\"   >> ${PGDATA}/postgresql.conf && \
     echo \"peql.log_verbosity = 'full'\" >> ${PGDATA}/postgresql.conf && \
@@ -56,4 +56,4 @@ RUN su - postgres -c " \
 EXPOSE 5432
 
 USER postgres
-CMD ["postgres"]
+CMD ["/usr/pgsql-18/bin/postgres"]
