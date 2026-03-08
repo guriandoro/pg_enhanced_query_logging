@@ -88,8 +88,18 @@ Add these lines to `postgresql.conf` and restart:
 
 ```
 shared_preload_libraries = 'pg_enhanced_query_logging'
-peql.log_min_duration = 100    # log queries slower than 100ms
-peql.log_verbosity = 'full'    # include all extended metrics
+# log all queries
+peql.log_min_duration = 0
+# include all extended metrics
+peql.log_verbosity = 'full'
+```
+
+You can also disable PostgreSQL's native logging:
+
+```
+log_statement = 'none'
+log_min_duration_statement = -1
+log_duration = off
 ```
 
 Run some queries, then analyze with pt-query-digest:
@@ -539,7 +549,7 @@ If any of these fail, install the missing package as shown above. The SQL regres
 
 ### Disabling Default PostgreSQL Logging
 
-When testing this extension, you should disable PostgreSQL's built-in query logging so that only `pg_enhanced_query_logging` writes query entries. If both systems are active, PostgreSQL's default logging will duplicate query output into its own log files, making it harder to isolate and verify the extension's behavior.
+When testing this extension, you can disable PostgreSQL's built-in query logging so that only `pg_enhanced_query_logging` writes query entries.
 
 Add these settings to `postgresql.conf` (or pass them via `ALTER SYSTEM` / `-c` flags) on your test instance:
 
