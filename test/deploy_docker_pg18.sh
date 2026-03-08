@@ -201,7 +201,7 @@ ok "Extension installed"
 info "Configuring shared_preload_libraries and restarting PostgreSQL"
 docker exec "$CONTAINER_NAME" bash -c '
     PGCONF="$(psql -U postgres -tAc "SHOW config_file;")"
-    echo "shared_preload_libraries = '"'"'pg_enhanced_query_logging'"'"'" >> "$PGCONF"
+    echo "shared_preload_libraries = '"'"'pg_enhanced_query_logging,pg_stat_statements'"'"'" >> "$PGCONF"
     echo "peql.log_min_duration = 0"   >> "$PGCONF"
     echo "peql.log_verbosity = '"'"'full'"'"'" >> "$PGCONF"
     echo "track_io_timing = on"        >> "$PGCONF"
@@ -232,6 +232,41 @@ docker exec "$CONTAINER_NAME" bash -c '
     LOG_DIR=$(psql -U postgres -tAc "SHOW log_directory;")
     cat "${DATA_DIR}/${LOG_DIR}/peql-slow.log" 2>/dev/null | head -20
 ' || true
+
+# --- PMM client installation ------------------------------------------------
+
+info "Installing pmm-client inside the container"
+docker exec "$CONTAINER_NAME" bash -c '
+    apt-get install -y -qq wget >/dev/null 2>&1 &&
+    wget -q https://repo.percona.com/apt/percona-release_latest.generic_all.deb &&
+    dpkg -i percona-release_latest.generic_all.deb >/dev/null 2>&1 &&
+    percona-release enable pmm3-client >/dev/null 2>&1 &&
+    apt-get update -qq &&
+    apt-get install -y -qq pmm-client >/dev/null 2>&1
+'
+ok "pmm-client installed"
+
+# --- PMM client registration ------------------------------------------------
+
+info "Creating pmm user and pg_stat_statements extension"
+docker exec "$CONTAINER_NAME" psql -U postgres -c \
+    "CREATE USER pmm WITH SUPERUSER ENCRYPTED PASSWORD 'pmm';"
+docker exec "$CONTAINER_NAME" psql -U postgres -c \
+    "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+
+info "Registering with PMM server"
+docker exec "$CONTAINER_NAME" bash -c "
+    pmm-admin setup --server-insecure-tls \
+        --server-url=https://admin:${PMM_PASSWORD}@${PMM_CONTAINER}:8443
+"
+ok "PMM client registered"
+
+info "Adding PostgreSQL service to PMM"
+docker exec "$CONTAINER_NAME" bash -c '
+    pmm-admin add postgresql --username=pmm --password=pmm \
+        --query-source=pgstatstatements
+'
+ok "PostgreSQL service added to PMM"
 
 # --- summary ----------------------------------------------------------------
 
