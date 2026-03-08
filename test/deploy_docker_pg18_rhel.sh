@@ -7,12 +7,20 @@
 #   ./test/deploy_docker_pg18_rhel.sh          # build, start, verify
 #   ./test/deploy_docker_pg18_rhel.sh teardown  # stop and remove
 #
+# Environment variables (all optional):
+#   PEQL_PG_PORT        Host port to expose PostgreSQL on (default: 15433)
+#   PEQL_PG_PASSWORD    Password for the postgres user    (default: peqltest)
+#   PEQL_MEMORY_LIMIT   Container memory cap              (default: 50g)
+#   PEQL_DISK_LIMIT     Container disk cap                (default: 200g)
+#
 set -euo pipefail
 
 CONTAINER_NAME="peql-pg18-rhel-test"
 IMAGE_NAME="peql-pg18-rhel"
 PG_PORT="${PEQL_PG_PORT:-15433}"
 PG_PASSWORD="${PEQL_PG_PASSWORD:-peqltest}"
+MEMORY_LIMIT="${PEQL_MEMORY_LIMIT:-50g}"
+DISK_LIMIT="${PEQL_DISK_LIMIT:-200g}"
 
 # --- helpers ----------------------------------------------------------------
 
@@ -65,6 +73,8 @@ ok "Image built"
 info "Starting container ($CONTAINER_NAME) on port $PG_PORT"
 docker run -d \
     --name "$CONTAINER_NAME" \
+    --memory="$MEMORY_LIMIT" \
+    --storage-opt size="$DISK_LIMIT" \
     -e POSTGRES_PASSWORD="$PG_PASSWORD" \
     -p "${PG_PORT}:5432" \
     "$IMAGE_NAME" \
