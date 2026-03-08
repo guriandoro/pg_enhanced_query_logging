@@ -110,12 +110,13 @@ ok "Extension installed"
 # --- load the extension into PostgreSQL --------------------------------------
 
 info "Configuring shared_preload_libraries and restarting PostgreSQL"
-docker exec "$CONTAINER_NAME" bash -c "
-    echo \"shared_preload_libraries = 'pg_enhanced_query_logging'\" >> /var/lib/postgresql/data/postgresql.conf
-    echo \"peql.log_min_duration = 0\"   >> /var/lib/postgresql/data/postgresql.conf
-    echo \"peql.log_verbosity = 'full'\" >> /var/lib/postgresql/data/postgresql.conf
-    echo \"track_io_timing = on\"        >> /var/lib/postgresql/data/postgresql.conf
-"
+docker exec "$CONTAINER_NAME" bash -c '
+    PGCONF="$(psql -U postgres -tAc "SHOW config_file;")"
+    echo "shared_preload_libraries = '"'"'pg_enhanced_query_logging'"'"'" >> "$PGCONF"
+    echo "peql.log_min_duration = 0"   >> "$PGCONF"
+    echo "peql.log_verbosity = '"'"'full'"'"'" >> "$PGCONF"
+    echo "track_io_timing = on"        >> "$PGCONF"
+'
 
 docker restart "$CONTAINER_NAME"
 wait_for_pg
@@ -137,8 +138,11 @@ docker exec "$CONTAINER_NAME" psql -U postgres -c \
 
 sleep 1
 
-LOG_DIR=$(docker exec "$CONTAINER_NAME" psql -U postgres -tAc "SHOW log_directory;")
-docker exec "$CONTAINER_NAME" bash -c "cat /var/lib/postgresql/data/${LOG_DIR}/peql-slow.log 2>/dev/null | head -20" || true
+docker exec "$CONTAINER_NAME" bash -c '
+    DATA_DIR=$(psql -U postgres -tAc "SHOW data_directory;")
+    LOG_DIR=$(psql -U postgres -tAc "SHOW log_directory;")
+    cat "${DATA_DIR}/${LOG_DIR}/peql-slow.log" 2>/dev/null | head -20
+' || true
 
 # --- summary ----------------------------------------------------------------
 
