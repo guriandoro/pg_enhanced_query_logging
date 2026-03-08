@@ -212,12 +212,25 @@ docker exec "$CONTAINER_NAME" bash -c '
 
 # --- PMM client installation ------------------------------------------------
 
-info "Installing pmm-client inside the container"
+info "Installing percona-release package"
 docker exec "$CONTAINER_NAME" bash -c '
-    yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm >/dev/null 2>&1 &&
-    percona-release enable pmm3-client >/dev/null 2>&1 &&
-    yum install -y pmm-client >/dev/null 2>&1
-'
+    yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm
+' || fail "Failed to install percona-release package"
+ok "percona-release installed"
+
+info "Enabling pmm3-client repository"
+docker exec "$CONTAINER_NAME" bash -c '
+    percona-release enable pmm3-client
+' || fail "Failed to enable pmm3-client repository"
+ok "pmm3-client repository enabled"
+
+info "Installing pmm-client (this may take a while)"
+docker exec "$CONTAINER_NAME" bash -c '
+    yum install -y pmm-client
+' || fail "Failed to install pmm-client"
+
+docker exec "$CONTAINER_NAME" pmm-admin --version ||
+    fail "pmm-admin not found after installation"
 ok "pmm-client installed"
 
 # --- PMM client registration ------------------------------------------------
