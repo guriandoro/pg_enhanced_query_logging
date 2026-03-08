@@ -280,6 +280,8 @@ ok "PMM client registered"
 PMM_ADD_FLAGS="--username=pmm --password=pmm"
 if [ "$PMM_QAN" -eq 1 ]; then
     PMM_ADD_FLAGS="$PMM_ADD_FLAGS --query-source=pgstatstatements"
+else
+    PMM_ADD_FLAGS="$PMM_ADD_FLAGS --query-source=none"
 fi
 
 info "Adding PostgreSQL service to PMM"
