@@ -12,6 +12,8 @@
 #   PEQL_PG_PASSWORD    Password for the postgres user    (default: peqltest)
 #   PEQL_MEMORY_LIMIT   Container memory cap              (default: 50g)
 #   PEQL_DISK_LIMIT     Container disk cap                (default: 200g)
+#   PEQL_PMM_PORT       Host port for PMM UI              (default: 8444)
+#   PEQL_PMM_PASSWORD   PMM admin password                (default: admin)
 #
 set -euo pipefail
 
@@ -21,6 +23,12 @@ PG_PORT="${PEQL_PG_PORT:-15433}"
 PG_PASSWORD="${PEQL_PG_PASSWORD:-peqltest}"
 MEMORY_LIMIT="${PEQL_MEMORY_LIMIT:-50g}"
 DISK_LIMIT="${PEQL_DISK_LIMIT:-200g}"
+
+PMM_CONTAINER="peql-pmm-server"
+PMM_IMAGE="percona/pmm-server:3"
+PMM_PORT="${PEQL_PMM_PORT:-8444}"
+PMM_PASSWORD="${PEQL_PMM_PASSWORD:-admin}"
+DOCKER_NETWORK="peql-pmm-net"
 
 # --- helpers ----------------------------------------------------------------
 
@@ -43,12 +51,41 @@ wait_for_pg() {
     done
 }
 
+wait_for_pmm() {
+    local retries=60
+    info "Waiting for PMM server to become healthy"
+    while true; do
+        local status
+        status=$(docker inspect --format '{{.State.Health.Status}}' "$PMM_CONTAINER" 2>/dev/null || echo "unknown")
+        if [ "$status" = "healthy" ]; then
+            break
+        fi
+        retries=$((retries - 1))
+        if [ "$retries" -le 0 ]; then
+            fail "PMM server did not become healthy in time"
+        fi
+        sleep 5
+    done
+}
+
 # --- teardown ---------------------------------------------------------------
 
 if [ "${1:-}" = "teardown" ]; then
     info "Tearing down container $CONTAINER_NAME"
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     ok "Container removed"
+
+    if ! docker network inspect "$DOCKER_NETWORK" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | grep -q '[a-z]'; then
+        info "Removing PMM server container $PMM_CONTAINER"
+        docker rm -f "$PMM_CONTAINER" 2>/dev/null || true
+        ok "PMM server removed"
+
+        info "Removing Docker network $DOCKER_NETWORK"
+        docker network rm "$DOCKER_NETWORK" 2>/dev/null || true
+        ok "Network removed"
+    else
+        info "Other containers still on $DOCKER_NETWORK — keeping PMM server and network"
+    fi
     exit 0
 fi
 
@@ -59,6 +96,38 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 if ! command -v docker >/dev/null 2>&1; then
     fail "docker is not installed or not in PATH"
+fi
+
+# --- Docker network ---------------------------------------------------------
+
+info "Ensuring Docker network $DOCKER_NETWORK exists"
+docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1 ||
+    docker network create "$DOCKER_NETWORK"
+ok "Network ready"
+
+# --- PMM server -------------------------------------------------------------
+
+if docker ps --format '{{.Names}}' | grep -qx "$PMM_CONTAINER"; then
+    info "PMM server container $PMM_CONTAINER is already running — reusing"
+else
+    if docker ps -a --format '{{.Names}}' | grep -qx "$PMM_CONTAINER"; then
+        docker rm -f "$PMM_CONTAINER" >/dev/null
+    fi
+
+    info "Pulling $PMM_IMAGE (if not cached)"
+    docker pull "$PMM_IMAGE"
+
+    info "Starting PMM server ($PMM_CONTAINER) on port $PMM_PORT"
+    docker run -d \
+        --name "$PMM_CONTAINER" \
+        --network "$DOCKER_NETWORK" \
+        -e PMM_ADMIN_PASSWORD="$PMM_PASSWORD" \
+        -p "${PMM_PORT}:8443" \
+        "$PMM_IMAGE" \
+        >/dev/null
+
+    wait_for_pmm
+    ok "PMM server is healthy"
 fi
 
 # --- build the image --------------------------------------------------------
@@ -82,6 +151,7 @@ fi
 info "Starting container ($CONTAINER_NAME) on port $PG_PORT"
 docker run -d \
     --name "$CONTAINER_NAME" \
+    --network "$DOCKER_NETWORK" \
     --memory="$MEMORY_LIMIT" \
     "${STORAGE_OPT[@]}" \
     -e POSTGRES_PASSWORD="$PG_PASSWORD" \
@@ -126,6 +196,7 @@ echo ""
 info "Container $CONTAINER_NAME is running PostgreSQL 18 (Rocky Linux 9) with pg_enhanced_query_logging loaded"
 echo ""
 echo "  Connect:   PGPASSWORD=$PG_PASSWORD psql -h localhost -p $PG_PORT -U postgres"
+echo "  PMM UI:    https://localhost:$PMM_PORT  (admin / $PMM_PASSWORD)"
 echo "  Teardown:  $0 teardown"
 echo ""
 echo "  View log:  docker exec $CONTAINER_NAME bash -c 'cat \$(psql -U postgres -tAc \"SHOW data_directory;\")/\$(psql -U postgres -tAc \"SHOW log_directory;\")/peql-slow.log'"
