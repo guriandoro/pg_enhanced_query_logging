@@ -190,6 +190,38 @@ docker exec "$CONTAINER_NAME" bash -c '
     cat "${DATA_DIR}/${LOG_DIR}/peql-slow.log" 2>/dev/null | head -20
 ' || true
 
+# --- PMM client installation ------------------------------------------------
+
+info "Installing pmm-client inside the container"
+docker exec "$CONTAINER_NAME" bash -c '
+    yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm >/dev/null 2>&1 &&
+    percona-release enable pmm3-client >/dev/null 2>&1 &&
+    yum install -y pmm-client >/dev/null 2>&1
+'
+ok "pmm-client installed"
+
+# --- PMM client registration ------------------------------------------------
+
+info "Creating pmm user and pg_stat_statements extension"
+docker exec "$CONTAINER_NAME" psql -U postgres -c \
+    "CREATE USER pmm WITH SUPERUSER ENCRYPTED PASSWORD 'pmm';"
+docker exec "$CONTAINER_NAME" psql -U postgres -c \
+    "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+
+info "Registering with PMM server"
+docker exec "$CONTAINER_NAME" bash -c "
+    pmm-admin setup --server-insecure-tls \
+        --server-url=https://admin:${PMM_PASSWORD}@${PMM_CONTAINER}:8443
+"
+ok "PMM client registered"
+
+info "Adding PostgreSQL service to PMM"
+docker exec "$CONTAINER_NAME" bash -c '
+    pmm-admin add postgresql --username=pmm --password=pmm \
+        --query-source=pgstatstatements
+'
+ok "PostgreSQL service added to PMM"
+
 # --- summary ----------------------------------------------------------------
 
 echo ""
