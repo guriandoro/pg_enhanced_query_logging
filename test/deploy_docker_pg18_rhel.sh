@@ -14,6 +14,8 @@
 #   PEQL_DISK_LIMIT     Container disk cap                (default: 200g)
 #   PEQL_PMM_PORT       Host port for PMM UI              (default: 8444)
 #   PEQL_PMM_PASSWORD   PMM admin password                (default: admin)
+#   PEQL_PMM_QAN        Enable Query Analytics via pg_stat_statements
+#                       (set to 1/true/yes to enable; disabled by default)
 #
 set -euo pipefail
 
@@ -29,6 +31,11 @@ PMM_IMAGE="percona/pmm-server:3"
 PMM_PORT="${PEQL_PMM_PORT:-8444}"
 PMM_PASSWORD="${PEQL_PMM_PASSWORD:-admin}"
 DOCKER_NETWORK="peql-pmm-net"
+
+case "${PEQL_PMM_QAN:-}" in
+    1|true|yes) PMM_QAN=1 ;;
+    *)          PMM_QAN=0 ;;
+esac
 
 # --- helpers ----------------------------------------------------------------
 
@@ -176,6 +183,19 @@ ok "Extension created"
 docker exec "$CONTAINER_NAME" psql -U postgres -c \
     "SHOW shared_preload_libraries;"
 
+if [ "$PMM_QAN" -eq 1 ]; then
+    info "Enabling pg_stat_statements for Query Analytics"
+    docker exec "$CONTAINER_NAME" bash -c '
+        PGCONF="$(psql -U postgres -tAc "SHOW config_file;")"
+        sed -i "s/shared_preload_libraries = '\''pg_enhanced_query_logging'\''/shared_preload_libraries = '\''pg_enhanced_query_logging,pg_stat_statements'\''/" "$PGCONF"
+    '
+    docker restart "$CONTAINER_NAME"
+    wait_for_pg
+    docker exec "$CONTAINER_NAME" psql -U postgres -c \
+        "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+    ok "pg_stat_statements enabled"
+fi
+
 # --- verify logging ---------------------------------------------------------
 
 info "Running a test query to verify logging"
@@ -202,11 +222,9 @@ ok "pmm-client installed"
 
 # --- PMM client registration ------------------------------------------------
 
-info "Creating pmm user and pg_stat_statements extension"
+info "Creating pmm user"
 docker exec "$CONTAINER_NAME" psql -U postgres -c \
     "CREATE USER pmm WITH SUPERUSER ENCRYPTED PASSWORD 'pmm';"
-docker exec "$CONTAINER_NAME" psql -U postgres -c \
-    "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
 
 info "Registering with PMM server"
 docker exec "$CONTAINER_NAME" bash -c "
@@ -215,11 +233,15 @@ docker exec "$CONTAINER_NAME" bash -c "
 "
 ok "PMM client registered"
 
+PMM_ADD_FLAGS="--username=pmm --password=pmm"
+if [ "$PMM_QAN" -eq 1 ]; then
+    PMM_ADD_FLAGS="$PMM_ADD_FLAGS --query-source=pgstatstatements"
+fi
+
 info "Adding PostgreSQL service to PMM"
-docker exec "$CONTAINER_NAME" bash -c '
-    pmm-admin add postgresql --username=pmm --password=pmm \
-        --query-source=pgstatstatements
-'
+docker exec "$CONTAINER_NAME" bash -c "
+    pmm-admin add postgresql $PMM_ADD_FLAGS
+"
 ok "PostgreSQL service added to PMM"
 
 # --- summary ----------------------------------------------------------------
