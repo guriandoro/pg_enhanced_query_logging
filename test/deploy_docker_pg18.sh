@@ -82,6 +82,7 @@ docker exec "$CONTAINER_NAME" bash -c '
     apt-get update -qq &&
     apt-get install -y -qq --no-install-recommends \
         build-essential \
+        libkrb5-dev \
         postgresql-server-dev-$(pg_config --version | sed "s/PostgreSQL //" | cut -d. -f1) \
         > /dev/null 2>&1
 '
