@@ -19,10 +19,16 @@ RUN dnf -y install \
     dnf -y install \
         postgresql${PG_MAJOR}-server \
         postgresql${PG_MAJOR}-devel \
+        postgresql${PG_MAJOR}-llvmjit \
         gcc \
+        clang \
+        llvm-devel \
         make \
         redhat-rpm-config \
-        krb5-devel && \
+        openssl-devel \
+        krb5-devel \
+        libxml2-devel \
+        lz4-devel && \
     dnf clean all
 
 ENV PATH="/usr/pgsql-${PG_MAJOR}/bin:${PATH}" \
