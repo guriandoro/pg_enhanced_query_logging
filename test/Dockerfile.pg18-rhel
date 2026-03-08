@@ -1,0 +1,51 @@
+#
+# Rocky Linux 9 + PostgreSQL 18 image for testing pg_enhanced_query_logging.
+#
+# Build:
+#   docker build -f test/Dockerfile.pg18-rhel -t peql-pg18-rhel .
+#
+# Run:
+#   docker run -d --name peql-pg18-rhel-test \
+#       -e POSTGRES_PASSWORD=peqltest -p 15433:5432 peql-pg18-rhel
+#
+FROM rockylinux:9
+
+ARG PG_MAJOR=18
+
+RUN dnf -y install \
+        https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm && \
+    dnf -y install \
+        postgresql${PG_MAJOR}-server \
+        postgresql${PG_MAJOR}-devel \
+        gcc \
+        make \
+        redhat-rpm-config \
+        krb5-devel && \
+    dnf clean all
+
+ENV PATH="/usr/pgsql-${PG_MAJOR}/bin:${PATH}" \
+    PGDATA="/var/lib/pgsql/${PG_MAJOR}/data"
+
+COPY . /tmp/pg_enhanced_query_logging
+
+RUN cd /tmp/pg_enhanced_query_logging && \
+    make clean USE_PGXS=1 2>/dev/null || true && \
+    make USE_PGXS=1 -j"$(nproc)" && \
+    make install USE_PGXS=1 && \
+    rm -rf /tmp/pg_enhanced_query_logging
+
+RUN su - postgres -c " \
+    initdb --pgdata=${PGDATA} && \
+    echo \"shared_preload_libraries = 'pg_enhanced_query_logging'\" >> ${PGDATA}/postgresql.conf && \
+    echo \"peql.log_min_duration = 0\"   >> ${PGDATA}/postgresql.conf && \
+    echo \"peql.log_verbosity = 'full'\" >> ${PGDATA}/postgresql.conf && \
+    echo \"track_io_timing = on\"        >> ${PGDATA}/postgresql.conf && \
+    echo \"listen_addresses = '*'\"      >> ${PGDATA}/postgresql.conf && \
+    echo 'host all all 0.0.0.0/0 md5'   >> ${PGDATA}/pg_hba.conf && \
+    echo 'host all all ::/0      md5'   >> ${PGDATA}/pg_hba.conf \
+"
+
+EXPOSE 5432
+
+USER postgres
+CMD ["postgres"]
