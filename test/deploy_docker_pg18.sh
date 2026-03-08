@@ -29,6 +29,13 @@ info()  { printf '\033[1;34m==> %s\033[0m\n' "$*"; }
 ok()    { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
 fail()  { printf '\033[1;31m  ✗ %s\033[0m\n' "$*"; exit 1; }
 
+supports_storage_opt() {
+    local driver
+    driver=$(docker info --format '{{.Driver}}' 2>/dev/null)
+    [ "$driver" = "overlay2" ] &&
+        docker info --format '{{.DriverStatus}}' 2>/dev/null | grep -q "xfs"
+}
+
 wait_for_pg() {
     local retries=30
     while ! docker exec "$CONTAINER_NAME" pg_isready -U postgres >/dev/null 2>&1; do
@@ -68,11 +75,16 @@ fi
 info "Pulling $PG_IMAGE (if not cached)"
 docker pull "$PG_IMAGE"
 
+STORAGE_OPT=()
+if supports_storage_opt; then
+    STORAGE_OPT=(--storage-opt "size=$DISK_LIMIT")
+fi
+
 info "Starting PostgreSQL 18 container ($CONTAINER_NAME) on port $PG_PORT"
 docker run -d \
     --name "$CONTAINER_NAME" \
     --memory="$MEMORY_LIMIT" \
-    --storage-opt size="$DISK_LIMIT" \
+    "${STORAGE_OPT[@]}" \
     -e POSTGRES_PASSWORD="$PG_PASSWORD" \
     -p "${PG_PORT}:5432" \
     "$PG_IMAGE" \
