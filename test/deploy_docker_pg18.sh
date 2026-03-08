@@ -248,7 +248,7 @@ docker exec "$CONTAINER_NAME" bash -c '
 # --- PMM client installation ------------------------------------------------
 
 info "Installing percona-release package"
-docker exec "$CONTAINER_NAME" bash -c '
+docker exec --user root "$CONTAINER_NAME" bash -c '
     apt-get install -y wget &&
     wget https://repo.percona.com/apt/percona-release_latest.generic_all.deb &&
     dpkg -i percona-release_latest.generic_all.deb
@@ -256,14 +256,14 @@ docker exec "$CONTAINER_NAME" bash -c '
 ok "percona-release installed"
 
 info "Enabling pmm3-client repository"
-docker exec "$CONTAINER_NAME" bash -c '
+docker exec --user root "$CONTAINER_NAME" bash -c '
     percona-release enable pmm3-client &&
     apt-get update
 ' || fail "Failed to enable pmm3-client repository"
 ok "pmm3-client repository enabled"
 
 info "Installing pmm-client (this may take a while)"
-docker exec "$CONTAINER_NAME" bash -c '
+docker exec --user root "$CONTAINER_NAME" bash -c '
     apt-get install -y pmm-client
 ' || fail "Failed to install pmm-client"
 
@@ -284,7 +284,7 @@ if [ "$PMM_QAN" -eq 1 ]; then
 fi
 
 info "Registering with PMM server"
-docker exec "$CONTAINER_NAME" bash -c "
+docker exec --user root "$CONTAINER_NAME" bash -c "
     pmm-admin setup --server-insecure-tls \
         --server-url=https://admin:${PMM_PASSWORD}@${PMM_CONTAINER}:8443
 "
@@ -298,7 +298,7 @@ else
 fi
 
 info "Adding PostgreSQL service to PMM"
-docker exec "$CONTAINER_NAME" bash -c "
+docker exec --user root "$CONTAINER_NAME" bash -c "
     pmm-admin add postgresql $PMM_ADD_FLAGS
 "
 ok "PostgreSQL service added to PMM"
