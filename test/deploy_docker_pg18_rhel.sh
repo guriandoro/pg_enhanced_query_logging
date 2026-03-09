@@ -30,6 +30,8 @@ PMM_CONTAINER="peql-pmm-server"
 PMM_IMAGE="percona/pmm-server:3"
 PMM_PORT="${PEQL_PMM_PORT:-8444}"
 PMM_PASSWORD="${PEQL_PMM_PASSWORD:-admin}"
+PMM_CLIENT_CONTAINER="peql-pmm-client-rhel"
+PMM_CLIENT_IMAGE="percona/pmm-client:3"
 DOCKER_NETWORK="peql-pmm-net"
 
 case "${PEQL_PMM_QAN:-}" in
@@ -81,6 +83,10 @@ if [ "${1:-}" = "teardown" ]; then
     info "Tearing down container $CONTAINER_NAME"
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     ok "Container removed"
+
+    info "Removing PMM client container $PMM_CLIENT_CONTAINER"
+    docker rm -f "$PMM_CLIENT_CONTAINER" 2>/dev/null || true
+    ok "PMM client removed"
 
     if ! docker network inspect "$DOCKER_NETWORK" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | grep -q '[a-z]'; then
         info "Removing PMM server container $PMM_CONTAINER"
@@ -210,43 +216,46 @@ docker exec "$CONTAINER_NAME" bash -c '
     cat "${DATA_DIR}/${LOG_DIR}/peql-slow.log" 2>/dev/null | head -20
 ' || true
 
-# --- PMM client installation ------------------------------------------------
+# --- PMM client setup -------------------------------------------------------
 
-info "Installing percona-release package"
-docker exec --user root "$CONTAINER_NAME" bash -c '
-    yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm
-' || fail "Failed to install percona-release package"
-ok "percona-release installed"
-
-info "Enabling pmm3-client repository"
-docker exec --user root "$CONTAINER_NAME" bash -c '
-    percona-release enable pmm3-client
-' || fail "Failed to enable pmm3-client repository"
-ok "pmm3-client repository enabled"
-
-info "Installing pmm-client (this may take a while)"
-docker exec --user root "$CONTAINER_NAME" bash -c '
-    yum install -y pmm-client
-' || fail "Failed to install pmm-client"
-
-docker exec "$CONTAINER_NAME" pmm-admin --version ||
-    fail "pmm-admin not found after installation"
-ok "pmm-client installed"
-
-# --- PMM client registration ------------------------------------------------
-
-info "Creating pmm user"
+info "Creating pmm user in PostgreSQL"
 docker exec "$CONTAINER_NAME" psql -U postgres -c \
     "CREATE USER pmm WITH SUPERUSER ENCRYPTED PASSWORD 'pmm';"
 
-info "Configuring PMM client"
-docker exec --user root "$CONTAINER_NAME" bash -c "
-    pmm-admin config --server-insecure-tls \
-        --server-url=https://admin:${PMM_PASSWORD}@${PMM_CONTAINER}:8443
-" || fail "Failed to configure PMM client"
-ok "PMM client configured"
+if docker ps -a --format '{{.Names}}' | grep -qx "$PMM_CLIENT_CONTAINER"; then
+    info "Removing existing PMM client container $PMM_CLIENT_CONTAINER"
+    docker rm -f "$PMM_CLIENT_CONTAINER" >/dev/null
+fi
 
-PMM_ADD_FLAGS="--username=pmm --password=pmm"
+info "Pulling $PMM_CLIENT_IMAGE (if not cached)"
+docker pull "$PMM_CLIENT_IMAGE"
+
+info "Starting PMM client container ($PMM_CLIENT_CONTAINER)"
+docker run -d \
+    --name "$PMM_CLIENT_CONTAINER" \
+    --network "$DOCKER_NETWORK" \
+    -e PMM_AGENT_SERVER_ADDRESS="${PMM_CONTAINER}:8443" \
+    -e PMM_AGENT_SERVER_USERNAME=admin \
+    -e PMM_AGENT_SERVER_PASSWORD="${PMM_PASSWORD}" \
+    -e PMM_AGENT_SERVER_INSECURE_TLS=1 \
+    -e PMM_AGENT_SETUP=1 \
+    -e PMM_AGENT_CONFIG_FILE=config/pmm-agent.yaml \
+    -e PMM_AGENT_PRERUN_SCRIPT="pmm-admin status --wait=10s" \
+    "$PMM_CLIENT_IMAGE" \
+    >/dev/null
+
+info "Waiting for PMM client to register"
+local_retries=30
+while ! docker exec "$PMM_CLIENT_CONTAINER" pmm-admin status >/dev/null 2>&1; do
+    local_retries=$((local_retries - 1))
+    if [ "$local_retries" -le 0 ]; then
+        fail "PMM client did not become ready in time"
+    fi
+    sleep 2
+done
+ok "PMM client is ready"
+
+PMM_ADD_FLAGS="--username=pmm --password=pmm --host=$CONTAINER_NAME --port=5432"
 if [ "$PMM_QAN" -eq 1 ]; then
     PMM_ADD_FLAGS="$PMM_ADD_FLAGS --query-source=pgstatstatements"
 else
@@ -254,9 +263,8 @@ else
 fi
 
 info "Adding PostgreSQL service to PMM"
-docker exec --user root "$CONTAINER_NAME" bash -c "
-    pmm-admin add postgresql $PMM_ADD_FLAGS
-" || fail "Failed to add PostgreSQL service to PMM"
+docker exec "$PMM_CLIENT_CONTAINER" pmm-admin add postgresql $PMM_ADD_FLAGS ||
+    fail "Failed to add PostgreSQL service to PMM"
 ok "PostgreSQL service added to PMM"
 
 # --- summary ----------------------------------------------------------------
@@ -264,9 +272,10 @@ ok "PostgreSQL service added to PMM"
 echo ""
 info "Container $CONTAINER_NAME is running PostgreSQL 18 (Rocky Linux 9) with pg_enhanced_query_logging loaded"
 echo ""
-echo "  Connect:   PGPASSWORD=$PG_PASSWORD psql -h localhost -p $PG_PORT -U postgres"
-echo "  PMM UI:    https://localhost:$PMM_PORT  (admin / $PMM_PASSWORD)"
-echo "  Teardown:  $0 teardown"
+echo "  Connect:      PGPASSWORD=$PG_PASSWORD psql -h localhost -p $PG_PORT -U postgres"
+echo "  PMM UI:       https://localhost:$PMM_PORT  (admin / $PMM_PASSWORD)"
+echo "  PMM client:   docker exec $PMM_CLIENT_CONTAINER pmm-admin status"
+echo "  Teardown:     $0 teardown"
 echo ""
-echo "  View log:  docker exec $CONTAINER_NAME bash -c 'cat \$(psql -U postgres -tAc \"SHOW data_directory;\")/\$(psql -U postgres -tAc \"SHOW log_directory;\")/peql-slow.log'"
+echo "  View log:     docker exec $CONTAINER_NAME bash -c 'cat \$(psql -U postgres -tAc \"SHOW data_directory;\")/\$(psql -U postgres -tAc \"SHOW log_directory;\")/peql-slow.log'"
 echo ""
