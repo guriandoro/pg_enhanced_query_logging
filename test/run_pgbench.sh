@@ -69,6 +69,22 @@ ok()    { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
 warn()  { printf '\033[1;33m  ! %s\033[0m\n' "$*"; }
 fail()  { printf '\033[1;31m  ✗ %s\033[0m\n' "$*"; exit 1; }
 
+# ── PMM annotation helper ────────────────────────────────────────────────
+
+PMM_CLIENT_CONTAINER="peql-pmm-client"
+
+pmm_annotate() {
+    local text="$1"
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$PMM_CLIENT_CONTAINER"; then
+        info "PMM annotation: $text"
+        docker exec "$PMM_CLIENT_CONTAINER" pmm-admin annotate "$text" 2>/dev/null \
+            && ok "Annotation created" \
+            || warn "Failed to create PMM annotation (non-fatal)"
+    else
+        warn "PMM client container ($PMM_CLIENT_CONTAINER) not running — skipping annotation"
+    fi
+}
+
 # ── detect container and auto-resolve port ──────────────────────────────
 
 detect_container() {
@@ -367,6 +383,9 @@ run_benchmark() {
 EOF
     } | tee -a "$RESULTS_FILE"
 
+    # ── PMM annotation
+    pmm_annotate "pgbench START — $label | ${MODE} ${CLIENTS}c ${DURATION}s"
+
     # ── run pgbench
     info "Running pgbench ($MODE, ${CLIENTS}c × ${THREADS}j × ${DURATION}s, protocol=$PROTOCOL)"
 
@@ -382,6 +401,8 @@ EOF
     if [[ "$pgbench_exit" -ne 0 ]]; then
         warn "pgbench exited with code $pgbench_exit"
     fi
+
+    pmm_annotate "pgbench END — $label | exit=$pgbench_exit"
 
     echo "" >> "$RESULTS_FILE"
     echo "── pgbench output ($label) ──────────────────────────────────────" >> "$RESULTS_FILE"
