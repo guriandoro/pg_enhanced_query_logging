@@ -1,7 +1,7 @@
 # pg_enhanced_query_logging
 
 <p align="center">
-  <img src="docs/images/peql-logo.png" alt="pg_enhanced_query_logging logo" width="600">
+  <img src="docs/images/peql-logo.png" alt="pg_enhanced_query_logging logo" width="50%">
 </p>
 
 A PostgreSQL extension that produces **pt-query-digest-compatible slow query logs** with extended PostgreSQL-specific metrics. Modeled after [Percona Server's improved slow query log](https://docs.percona.com/percona-server/innovation-release/slow-extended.html), it gives PostgreSQL users the same rich query analysis workflow that MySQL/Percona Server users have enjoyed for years.
