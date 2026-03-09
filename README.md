@@ -434,7 +434,7 @@ At `full` verbosity, the extension walks the executed plan tree using `planstate
 
 ### `pg_enhanced_query_logging_reset()`
 
-Rotates the slow query log file (renames to `.old`) and resets the per-backend statistics counters. Requires superuser privileges.
+Rotates the slow query log file (renames to `.old`) and resets the global statistics counters. Requires superuser privileges.
 
 ```sql
 SELECT pg_enhanced_query_logging_reset();
@@ -444,7 +444,7 @@ SELECT pg_enhanced_query_logging_reset();
 
 ### `pg_enhanced_query_logging_stats()`
 
-Returns per-backend logging counters. The counters are local to the calling backend and reset on log rotation (`pg_enhanced_query_logging_reset()`) or server restart. Requires superuser privileges.
+Returns global logging counters aggregated across all backends via shared memory. The counters reset on log rotation (`pg_enhanced_query_logging_reset()`) or server restart. Requires superuser privileges.
 
 | Column | Type | Description |
 |--------|------|-------------|

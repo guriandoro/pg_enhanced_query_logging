@@ -180,12 +180,6 @@ static bool peql_log_transaction = false;
 /* Track planning time separately from execution time. */
 static bool peql_track_planning = false;
 
-/* ---------- Internal per-backend statistics counters -------------------- */
-
-static int64 peql_queries_logged  = 0;
-static int64 peql_queries_skipped = 0;
-static int64 peql_bytes_written   = 0;
-
 /* ---------- Rate limiting state ----------------------------------------- */
 
 /*
@@ -200,9 +194,14 @@ static bool peql_session_is_sampled = false;
 
 typedef struct PeqlSharedState
 {
+	/* Adaptive rate limiting (per-window counters) */
 	pg_atomic_uint64	queries_this_window;
 	pg_atomic_uint64	bytes_this_window;
 	pg_atomic_uint64	window_start_usec;
+	/* Global statistics counters (across all backends) */
+	pg_atomic_uint64	total_queries_logged;
+	pg_atomic_uint64	total_queries_skipped;
+	pg_atomic_uint64	total_bytes_written;
 } PeqlSharedState;
 
 static PeqlSharedState *peql_shared = NULL;
@@ -757,6 +756,9 @@ peql_shmem_startup(void)
 		pg_atomic_init_u64(&peql_shared->bytes_this_window, 0);
 		pg_atomic_init_u64(&peql_shared->window_start_usec,
 						   (uint64) GetCurrentTimestamp());
+		pg_atomic_init_u64(&peql_shared->total_queries_logged, 0);
+		pg_atomic_init_u64(&peql_shared->total_queries_skipped, 0);
+		pg_atomic_init_u64(&peql_shared->total_bytes_written, 0);
 	}
 
 	LWLockRelease(AddinShmemInitLock);
@@ -1001,8 +1003,8 @@ peql_write_txn_log_entry(void)
 			appendStringInfoChar(&buf, '\n');
 
 		peql_flush_to_file(buf.data, buf.len);
-		peql_queries_logged++;
-		peql_bytes_written += buf.len;
+		pg_atomic_fetch_add_u64(&peql_shared->total_queries_logged, 1);
+		pg_atomic_fetch_add_u64(&peql_shared->total_bytes_written, (uint64) buf.len);
 		peql_adaptive_record(buf.len);
 	}
 	PG_CATCH();
@@ -1322,7 +1324,7 @@ peql_ExecutorEnd(QueryDesc *queryDesc)
 			if (peql_should_log(msec))
 				peql_write_log_entry(queryDesc, msec);
 			else
-				peql_queries_skipped++;
+				pg_atomic_fetch_add_u64(&peql_shared->total_queries_skipped, 1);
 		}
 	}
 
@@ -1411,7 +1413,7 @@ peql_ProcessUtility(PlannedStmt *pstmt,
 			if (peql_should_log(msec))
 				peql_write_utility_log_entry(queryString, msec, params);
 			else
-				peql_queries_skipped++;
+				pg_atomic_fetch_add_u64(&peql_shared->total_queries_skipped, 1);
 		}
 	}
 }
@@ -2355,8 +2357,8 @@ peql_write_log_entry(QueryDesc *queryDesc, double duration_ms)
 		initStringInfo(&buf);
 		peql_format_entry(&buf, queryDesc, duration_ms);
 		peql_flush_to_file(buf.data, buf.len);
-		peql_queries_logged++;
-		peql_bytes_written += buf.len;
+		pg_atomic_fetch_add_u64(&peql_shared->total_queries_logged, 1);
+		pg_atomic_fetch_add_u64(&peql_shared->total_bytes_written, (uint64) buf.len);
 		peql_adaptive_record(buf.len);
 	}
 	PG_CATCH();
@@ -2393,8 +2395,8 @@ peql_write_utility_log_entry(const char *queryString, double duration_ms,
 		initStringInfo(&buf);
 		peql_format_utility_entry(&buf, queryString, duration_ms, params);
 		peql_flush_to_file(buf.data, buf.len);
-		peql_queries_logged++;
-		peql_bytes_written += buf.len;
+		pg_atomic_fetch_add_u64(&peql_shared->total_queries_logged, 1);
+		pg_atomic_fetch_add_u64(&peql_shared->total_bytes_written, (uint64) buf.len);
 		peql_adaptive_record(buf.len);
 	}
 	PG_CATCH();
@@ -2454,9 +2456,9 @@ pg_enhanced_query_logging_reset(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(false);
 	}
 
-	peql_queries_logged  = 0;
-	peql_queries_skipped = 0;
-	peql_bytes_written   = 0;
+	pg_atomic_write_u64(&peql_shared->total_queries_logged, 0);
+	pg_atomic_write_u64(&peql_shared->total_queries_skipped, 0);
+	pg_atomic_write_u64(&peql_shared->total_bytes_written, 0);
 
 	ereport(NOTICE,
 			(errmsg("peql: log file \"%s\" has been rotated to \"%s\"",
@@ -2468,9 +2470,9 @@ pg_enhanced_query_logging_reset(PG_FUNCTION_ARGS)
 /*
  * pg_enhanced_query_logging_stats()
  *
- * Returns per-backend logging counters: queries_logged, queries_skipped,
- * bytes_written.  These track activity since the last reset (or server
- * start) and are local to the calling backend.
+ * Returns global logging counters: queries_logged, queries_skipped,
+ * bytes_written.  These are aggregated across all backends via shared
+ * memory atomics and track activity since the last reset (or server start).
  */
 Datum
 pg_enhanced_query_logging_stats(PG_FUNCTION_ARGS)
@@ -2487,9 +2489,9 @@ pg_enhanced_query_logging_stats(PG_FUNCTION_ARGS)
 
 	tupdesc = BlessTupleDesc(tupdesc);
 
-	values[0] = Int64GetDatum(peql_queries_logged);
-	values[1] = Int64GetDatum(peql_queries_skipped);
-	values[2] = Int64GetDatum(peql_bytes_written);
+	values[0] = Int64GetDatum((int64) pg_atomic_read_u64(&peql_shared->total_queries_logged));
+	values[1] = Int64GetDatum((int64) pg_atomic_read_u64(&peql_shared->total_queries_skipped));
+	values[2] = Int64GetDatum((int64) pg_atomic_read_u64(&peql_shared->total_bytes_written));
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls)));
 }
