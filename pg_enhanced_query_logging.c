@@ -14,7 +14,7 @@
  * duration threshold.  Behaviour is tunable via GUC variables prefixed
  * with "peql.".
  *
- * Copyright (c) 2026, Agustin Gallego
+ * Copyright (c) 2025-2026, guriandoro
  *
  * IDENTIFICATION
  *   pg_enhanced_query_logging/pg_enhanced_query_logging.c
