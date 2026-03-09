@@ -565,8 +565,6 @@ pct_diff() {
     printf "%+.2f%%" "$(echo "scale=4; ($on_val - $off_val) / $off_val * 100" | bc -l)"
 }
 
-pad() { printf '%*s' $(( $1 - ${#2} )) ''; }
-
 print_comparison() {
     local on_off_tps_diff on_off_lat_diff rate_off_tps_diff rate_off_lat_diff
     on_off_tps_diff=$(pct_diff "$ON_TPS_EXCL" "$OFF_TPS_EXCL")
@@ -574,19 +572,32 @@ print_comparison() {
     rate_off_tps_diff=$(pct_diff "$RATE_TPS_EXCL" "$OFF_TPS_EXCL")
     rate_off_lat_diff=$(pct_diff "$RATE_AVG_LATENCY" "$OFF_AVG_LATENCY")
 
-    local W=15
+    local C=15  # column width for data values
+    local L=24  # label column width
+
+    local hdr_fmt="  %-${L}s %${C}s %${C}s %${C}s %${C}s %${C}s\n"
+    local row_fmt="  %-${L}s %${C}s %${C}s %${C}s %${C}s %${C}s\n"
+    local row3_fmt="  %-${L}s %${C}s %${C}s %${C}s\n"
+
+    local total_w=$(( L + 2 + (C + 1) * 5 ))
+    local sep
+    sep="  $(printf '%*s' "$total_w" '' | tr ' ' '─')"
+
     cat <<EOF
 
-════════════════════════════════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════════════════════════════════════
   A/B/C Comparison — PEQL ON vs PEQL OFF vs PEQL ON (1% rate limit)
-════════════════════════════════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════════════════════════════════════
 
-                          PEQL ON$(pad $W "PEQL ON")PEQL OFF$(pad $W "PEQL OFF")PEQL ON 1%$(pad $W "PEQL ON 1%")ON vs OFF$(pad $W "ON vs OFF")1% vs OFF
-  ───────────────────────────────────────────────────────────────────────────────────
-  TPS (excl. conn)        ${ON_TPS_EXCL}$(pad $W "$ON_TPS_EXCL")${OFF_TPS_EXCL}$(pad $W "$OFF_TPS_EXCL")${RATE_TPS_EXCL}$(pad $W "$RATE_TPS_EXCL")${on_off_tps_diff}$(pad $W "$on_off_tps_diff")${rate_off_tps_diff}
-  Avg latency (ms)        ${ON_AVG_LATENCY}$(pad $W "$ON_AVG_LATENCY")${OFF_AVG_LATENCY}$(pad $W "$OFF_AVG_LATENCY")${RATE_AVG_LATENCY}$(pad $W "$RATE_AVG_LATENCY")${on_off_lat_diff}$(pad $W "$on_off_lat_diff")${rate_off_lat_diff}
-  Latency stddev (ms)     ${ON_LATENCY_STDDEV}$(pad $W "$ON_LATENCY_STDDEV")${OFF_LATENCY_STDDEV}$(pad $W "$OFF_LATENCY_STDDEV")${RATE_LATENCY_STDDEV}
-  Transactions            ${ON_TXNS}$(pad $W "$ON_TXNS")${OFF_TXNS}$(pad $W "$OFF_TXNS")${RATE_TXNS}
+EOF
+    printf "$hdr_fmt" "" "PEQL ON" "PEQL OFF" "PEQL ON 1%" "ON vs OFF" "1% vs OFF"
+    echo "$sep"
+    printf "$row_fmt" "TPS (excl. conn)" "$ON_TPS_EXCL" "$OFF_TPS_EXCL" "$RATE_TPS_EXCL" "$on_off_tps_diff" "$rate_off_tps_diff"
+    printf "$row_fmt" "Avg latency (ms)" "$ON_AVG_LATENCY" "$OFF_AVG_LATENCY" "$RATE_AVG_LATENCY" "$on_off_lat_diff" "$rate_off_lat_diff"
+    printf "$row3_fmt" "Latency stddev (ms)" "$ON_LATENCY_STDDEV" "$OFF_LATENCY_STDDEV" "$RATE_LATENCY_STDDEV"
+    printf "$row3_fmt" "Transactions" "$ON_TXNS" "$OFF_TXNS" "$RATE_TXNS"
+
+    cat <<EOF
 
   ── PEQL ON metrics ──
   Queries logged ......... ${ON_QUERIES_LOGGED}
@@ -601,7 +612,7 @@ print_comparison() {
   Log entries ............ $RATE_LOG_ENTRIES
 
   Results saved to: $RESULTS_FILE
-════════════════════════════════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════════════════════════════════════
 EOF
 }
 
