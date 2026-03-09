@@ -474,8 +474,13 @@ EOF
 
     # ── extract TPS / latency from pgbench output
     local tps_incl tps_excl avg_latency latency_stddev txns_processed
-    tps_incl=$(extract "including" "$output_file" | sed -n 's/.*tps = \([0-9.]*\).*including.*/\1/p')
-    tps_excl=$(extract "excluding" "$output_file" | sed -n 's/.*tps = \([0-9.]*\).*excluding.*/\1/p')
+    tps_incl=$(sed -n 's/.*tps = \([0-9.]*\).*including.*/\1/p' "$output_file" | head -1)
+    tps_excl=$(sed -n 's/.*tps = \([0-9.]*\).*excluding.*/\1/p' "$output_file" | head -1)
+    # PG 17+ only reports one TPS line: "tps = ... (without initial connection time)"
+    if [[ -z "$tps_excl" ]]; then
+        tps_excl=$(sed -n 's/.*tps = \([0-9.]*\).*(without initial connection time).*/\1/p' "$output_file" | head -1)
+        [[ -z "$tps_incl" && -n "$tps_excl" ]] && tps_incl="$tps_excl"
+    fi
     avg_latency=$(extract "latency average" "$output_file" | sed -n 's/.*latency average = \([0-9.]*\).*/\1/p')
     latency_stddev=$(extract "latency stddev" "$output_file" | sed -n 's/.*latency stddev = \([0-9.]*\).*/\1/p')
     txns_processed=$(extract "number of transactions actually processed" "$output_file" | sed -n 's/.*processed: \([0-9]*\).*/\1/p')
