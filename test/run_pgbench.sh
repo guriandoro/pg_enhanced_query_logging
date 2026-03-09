@@ -342,7 +342,14 @@ run_benchmark() {
         psql_cmd -c "ALTER SYSTEM SET peql.log_min_duration = $PEQL_LOG_MIN_DURATION;"
     fi
     if [[ -n "$extra_sql" ]]; then
-        psql_cmd -c "$extra_sql"
+        local -a psql_args=()
+        local stmt
+        while IFS= read -r stmt; do
+            stmt="${stmt#"${stmt%%[![:space:]]*}"}"
+            stmt="${stmt%"${stmt##*[![:space:]]}"}"
+            [[ -n "$stmt" ]] && psql_args+=(-c "$stmt;")
+        done < <(tr ';' '\n' <<< "$extra_sql")
+        [[ ${#psql_args[@]} -gt 0 ]] && psql_cmd "${psql_args[@]}"
     fi
     psql_cmd -c "SELECT pg_reload_conf();" >/dev/null
 
