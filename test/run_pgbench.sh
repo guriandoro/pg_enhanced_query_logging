@@ -71,17 +71,27 @@ fail()  { printf '\033[1;31m  ✗ %s\033[0m\n' "$*"; exit 1; }
 
 # ── PMM annotation helper ────────────────────────────────────────────────
 
-PMM_CLIENT_CONTAINER="peql-pmm-client"
+detect_pmm_client() {
+    for name in peql-pmm-client peql-pmm-client-rhel; do
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then
+            echo "$name"
+            return
+        fi
+    done
+    echo ""
+}
+
+PMM_CLIENT_CONTAINER=$(detect_pmm_client)
 
 pmm_annotate() {
     local text="$1"
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$PMM_CLIENT_CONTAINER"; then
+    if [[ -n "$PMM_CLIENT_CONTAINER" ]]; then
         info "PMM annotation: $text"
         docker exec "$PMM_CLIENT_CONTAINER" pmm-admin annotate "$text" 2>/dev/null \
             && ok "Annotation created" \
             || warn "Failed to create PMM annotation (non-fatal)"
     else
-        warn "PMM client container ($PMM_CLIENT_CONTAINER) not running — skipping annotation"
+        warn "No PMM client container running — skipping annotation"
     fi
 }
 
