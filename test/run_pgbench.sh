@@ -393,6 +393,16 @@ run_benchmark() {
 EOF
     } | tee -a "$RESULTS_FILE"
 
+    # ── force checkpoint and drop OS page cache to avoid background I/O
+    info "Running CHECKPOINT"
+    psql_cmd -c "CHECKPOINT;" >/dev/null
+    if [[ -n "$CONTAINER" ]]; then
+        info "Syncing and dropping OS page cache inside container"
+        docker exec "$CONTAINER" bash -c 'sync && echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null \
+            && ok "Page cache cleared" \
+            || warn "Could not drop page cache (non-fatal, may lack privileges)"
+    fi
+
     # ── PMM annotation
     pmm_annotate "pgbench START — $label | ${MODE} ${CLIENTS}c ${DURATION}s"
 
