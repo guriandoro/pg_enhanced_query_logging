@@ -6,8 +6,8 @@
 /*
  * pg_enhanced_query_logging_reset()
  *
- * Rotates the slow query log file and resets per-backend counters.
- * Returns true on success.  Requires superuser privileges.
+ * Rotates the slow query log file and resets the global statistics
+ * counters.  Returns true on success.  Requires superuser privileges.
  */
 CREATE FUNCTION pg_enhanced_query_logging_reset()
 RETURNS bool
@@ -19,8 +19,8 @@ REVOKE ALL ON FUNCTION pg_enhanced_query_logging_reset() FROM PUBLIC;
 /*
  * pg_enhanced_query_logging_stats()
  *
- * Returns per-backend logging counters.  The counters are local to the
- * calling backend and reset on log rotation or server restart.
+ * Returns global logging counters aggregated across all backends via
+ * shared memory.  The counters reset on log rotation or server restart.
  */
 CREATE FUNCTION pg_enhanced_query_logging_stats(
     OUT queries_logged  bigint,
