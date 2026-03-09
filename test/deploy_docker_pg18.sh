@@ -283,12 +283,19 @@ if [ "$PMM_QAN" -eq 1 ]; then
         "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
 fi
 
-info "Registering with PMM server"
+info "Configuring pmm-agent"
 docker exec --user root "$CONTAINER_NAME" bash -c "
-    pmm-admin setup --server-insecure-tls \
+    pmm-admin config --server-insecure-tls \
         --server-url=https://admin:${PMM_PASSWORD}@${PMM_CONTAINER}:8443
-"
-ok "PMM client registered"
+" || fail "Failed to configure pmm-agent"
+ok "pmm-agent configured"
+
+info "Registering node with PMM server"
+docker exec --user root "$CONTAINER_NAME" bash -c "
+    pmm-admin register --server-insecure-tls \
+        --server-url=https://admin:${PMM_PASSWORD}@${PMM_CONTAINER}:8443
+" || fail "Failed to register node with PMM server"
+ok "Node registered with PMM server"
 
 PMM_ADD_FLAGS="--username=pmm --password=pmm"
 if [ "$PMM_QAN" -eq 1 ]; then
