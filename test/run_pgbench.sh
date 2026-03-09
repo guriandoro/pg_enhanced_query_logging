@@ -5,6 +5,11 @@
 # pg_enhanced_query_logging under configurable concurrency and workload
 # scenarios.
 #
+# The script performs an A/B comparison by running pgbench twice:
+#   Phase 1 — PEQL ON:  peql.enabled = on  (measures extension overhead)
+#   Phase 2 — PEQL OFF: peql.enabled = off (baseline without the extension)
+# A comparison summary with deltas is printed at the end.
+#
 # Usage:
 #   ./test/run_pgbench.sh              # run with defaults
 #   ./test/run_pgbench.sh init         # (re-)initialize pgbench data only
@@ -32,8 +37,7 @@
 #                           tables: yes | no | auto
 #                           (default: auto — init if tables are missing)
 #
-# ── PEQL extension toggle (A/B comparison) ─────────────────────────────
-#   PEQL_BENCH_PEQL_ENABLED      on | off  (default: on)
+# ── PEQL extension settings (applied during the PEQL ON phase) ────────
 #   PEQL_BENCH_VERBOSITY         minimal | standard | full
 #                                (default: current server setting)
 #   PEQL_BENCH_LOG_MIN_DURATION  peql.log_min_duration value
@@ -107,7 +111,6 @@ PROTOCOL="${PEQL_BENCH_PROTOCOL:-prepared}"
 CUSTOM_SCRIPT="${PEQL_BENCH_CUSTOM_SCRIPT:-}"
 INIT_MODE="${PEQL_BENCH_INIT:-auto}"
 
-PEQL_ENABLED="${PEQL_BENCH_PEQL_ENABLED:-on}"
 PEQL_VERBOSITY="${PEQL_BENCH_VERBOSITY:-}"
 PEQL_LOG_MIN_DURATION="${PEQL_BENCH_LOG_MIN_DURATION:-}"
 
@@ -149,11 +152,6 @@ esac
 case "$PROTOCOL" in
     simple|extended|prepared) ;;
     *) fail "Invalid PEQL_BENCH_PROTOCOL '$PROTOCOL'. Must be: simple, extended, prepared" ;;
-esac
-
-case "$PEQL_ENABLED" in
-    on|off) ;;
-    *) fail "Invalid PEQL_BENCH_PEQL_ENABLED '$PEQL_ENABLED'. Must be: on, off" ;;
 esac
 
 if [[ -n "$PEQL_VERBOSITY" ]]; then
@@ -225,34 +223,7 @@ cleanup_write_heavy_script() {
 }
 trap cleanup_write_heavy_script EXIT
 
-# ── configure PEQL extension ───────────────────────────────────────────
-
-info "Configuring PEQL extension settings"
-
-psql_cmd -c "ALTER SYSTEM SET peql.enabled = '$PEQL_ENABLED';"
-if [[ -n "$PEQL_VERBOSITY" ]]; then
-    psql_cmd -c "ALTER SYSTEM SET peql.log_verbosity = '$PEQL_VERBOSITY';"
-fi
-if [[ -n "$PEQL_LOG_MIN_DURATION" ]]; then
-    psql_cmd -c "ALTER SYSTEM SET peql.log_min_duration = $PEQL_LOG_MIN_DURATION;"
-fi
-
-psql_cmd -c "SELECT pg_reload_conf();" >/dev/null
-
-ACTUAL_ENABLED=$(psql_cmd -c "SHOW peql.enabled;")
-ACTUAL_VERBOSITY=$(psql_cmd -c "SHOW peql.log_verbosity;")
-ACTUAL_MIN_DURATION=$(psql_cmd -c "SHOW peql.log_min_duration;")
-
-ok "peql.enabled = $ACTUAL_ENABLED"
-ok "peql.log_verbosity = $ACTUAL_VERBOSITY"
-ok "peql.log_min_duration = $ACTUAL_MIN_DURATION"
-
-# ── reset peql log ─────────────────────────────────────────────────────
-
-info "Resetting PEQL slow log"
-psql_cmd -c "SELECT pg_enhanced_query_logging_reset();" >/dev/null 2>&1 || warn "Could not reset log (extension may not be installed in this database)"
-
-# ── build pgbench command ──────────────────────────────────────────────
+# ── build pgbench args ─────────────────────────────────────────────────
 
 PGBENCH_ARGS=(
     -c "$CLIENTS"
@@ -277,99 +248,14 @@ elif [[ "$MODE" == "write-heavy" ]]; then
     create_write_heavy_script
     PGBENCH_ARGS+=(-f "$WRITE_HEAVY_SCRIPT")
 fi
-# read-write uses pgbench's built-in TPC-B (no extra flag needed)
 
-# ── print configuration ────────────────────────────────────────────────
+# ── results file ───────────────────────────────────────────────────────
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 mkdir -p "$RESULTS_DIR"
 RESULTS_FILE="$RESULTS_DIR/bench_${MODE}_c${CLIENTS}_t${DURATION}s_${TIMESTAMP}.txt"
 
-print_config() {
-    cat <<EOF
-════════════════════════════════════════════════════════════════════════
-  pgbench benchmark — pg_enhanced_query_logging overhead test
-════════════════════════════════════════════════════════════════════════
-
-  PostgreSQL .............. $PG_VERSION ($PG_HOST:$PG_PORT)
-  Container .............. ${CONTAINER:-"(direct connection)"}
-
-  Workload mode .......... $MODE
-  Clients ................ $CLIENTS
-  Threads ................ $THREADS
-  Duration ............... ${DURATION}s
-  Scale factor ........... $SCALE
-  Protocol ............... $PROTOCOL
-  Rate limit ............. $([ "$RATE" -gt 0 ] && echo "${RATE} TPS" || echo "unlimited")
-
-  peql.enabled ........... $ACTUAL_ENABLED
-  peql.log_verbosity ..... $ACTUAL_VERBOSITY
-  peql.log_min_duration .. $ACTUAL_MIN_DURATION
-
-────────────────────────────────────────────────────────────────────────
-EOF
-}
-
-print_config
-print_config > "$RESULTS_FILE"
-
-# ── run pgbench ─────────────────────────────────────────────────────────
-
-info "Running pgbench ($MODE, ${CLIENTS}c × ${THREADS}j × ${DURATION}s, protocol=$PROTOCOL)"
-
-PGBENCH_OUTPUT=$(mktemp /tmp/peql_bench_output.XXXXXX)
-trap 'cleanup_write_heavy_script; rm -f "$PGBENCH_OUTPUT"' EXIT
-
-set +e
-pgbench_cmd "${PGBENCH_ARGS[@]}" 2>&1 | tee "$PGBENCH_OUTPUT"
-PGBENCH_EXIT=$?
-set -e
-
-if [[ "$PGBENCH_EXIT" -ne 0 ]]; then
-    warn "pgbench exited with code $PGBENCH_EXIT"
-fi
-
-echo "" >> "$RESULTS_FILE"
-echo "── pgbench output ──────────────────────────────────────────────────" >> "$RESULTS_FILE"
-cat "$PGBENCH_OUTPUT" >> "$RESULTS_FILE"
-
-# ── collect PEQL metrics ───────────────────────────────────────────────
-
-echo ""
-info "Collecting PEQL metrics"
-
-PEQL_STATS=$(psql_cmd -c "SELECT queries_logged, queries_skipped, bytes_written FROM pg_enhanced_query_logging_stats();" 2>/dev/null || echo "||")
-QUERIES_LOGGED=$(echo "$PEQL_STATS" | cut -d'|' -f1)
-QUERIES_SKIPPED=$(echo "$PEQL_STATS" | cut -d'|' -f2)
-BYTES_WRITTEN=$(echo "$PEQL_STATS" | cut -d'|' -f3)
-
-LOG_SIZE="(unknown)"
-LOG_ENTRIES="(unknown)"
-if [[ -n "$CONTAINER" ]]; then
-    LOG_SIZE=$(docker exec "$CONTAINER" bash -c '
-        DATA_DIR=$(psql -U postgres -tAc "SHOW data_directory;")
-        LOG_DIR=$(psql -U postgres -tAc "SHOW log_directory;")
-        LOG_FILE=$(psql -U postgres -tAc "SHOW peql.log_filename;")
-        FILE="${DATA_DIR}/${LOG_DIR}/${LOG_FILE}"
-        if [ -f "$FILE" ]; then
-            stat -c %s "$FILE" 2>/dev/null || stat -f %z "$FILE" 2>/dev/null || echo 0
-        else
-            echo 0
-        fi
-    ' 2>/dev/null || echo "(unknown)")
-
-    LOG_ENTRIES=$(docker exec "$CONTAINER" bash -c '
-        DATA_DIR=$(psql -U postgres -tAc "SHOW data_directory;")
-        LOG_DIR=$(psql -U postgres -tAc "SHOW log_directory;")
-        LOG_FILE=$(psql -U postgres -tAc "SHOW peql.log_filename;")
-        FILE="${DATA_DIR}/${LOG_DIR}/${LOG_FILE}"
-        if [ -f "$FILE" ]; then
-            grep -c "^# Time:" "$FILE" 2>/dev/null || echo 0
-        else
-            echo 0
-        fi
-    ' 2>/dev/null || echo "(unknown)")
-fi
+# ── helper: format bytes ──────────────────────────────────────────────
 
 format_bytes() {
     local bytes=$1
@@ -388,7 +274,7 @@ format_bytes() {
     fi
 }
 
-# ── extract TPS from pgbench output ────────────────────────────────────
+# ── helper: extract value from pgbench output ─────────────────────────
 
 extract() {
     local pattern="$1" file="$2"
@@ -397,46 +283,249 @@ extract() {
     echo "$val"
 }
 
-TPS_INCL=$(extract "including" "$PGBENCH_OUTPUT" | sed -n 's/.*tps = \([0-9.]*\).*including.*/\1/p')
-TPS_EXCL=$(extract "excluding" "$PGBENCH_OUTPUT" | sed -n 's/.*tps = \([0-9.]*\).*excluding.*/\1/p')
-AVG_LATENCY=$(extract "latency average" "$PGBENCH_OUTPUT" | sed -n 's/.*latency average = \([0-9.]*\).*/\1/p')
-LATENCY_STDDEV=$(extract "latency stddev" "$PGBENCH_OUTPUT" | sed -n 's/.*latency stddev = \([0-9.]*\).*/\1/p')
-TXNS_PROCESSED=$(extract "number of transactions actually processed" "$PGBENCH_OUTPUT" | sed -n 's/.*processed: \([0-9]*\).*/\1/p')
+# ── run_benchmark: configure, run pgbench, collect metrics ────────────
+#
+# Arguments:
+#   $1 — run label (e.g. "PEQL ON", "PEQL OFF")
+#   $2 — peql.enabled value ("on" or "off")
+#
+# Sets result variables with a prefix (ON_ or OFF_) for later comparison.
 
-: "${TPS_INCL:=n/a}"
-: "${TPS_EXCL:=n/a}"
-: "${AVG_LATENCY:=n/a}"
-: "${LATENCY_STDDEV:=n/a}"
-: "${TXNS_PROCESSED:=n/a}"
+run_benchmark() {
+    local label="$1" peql_setting="$2"
+    local prefix
+    [[ "$peql_setting" == "on" ]] && prefix="ON" || prefix="OFF"
 
-# ── summary ─────────────────────────────────────────────────────────────
+    echo ""
+    info "════════════════════════════════════════════════════════════════"
+    info "  Phase: $label (peql.enabled = $peql_setting)"
+    info "════════════════════════════════════════════════════════════════"
 
-print_summary() {
+    # ── configure PEQL
+    info "Configuring PEQL extension (peql.enabled = $peql_setting)"
+    psql_cmd -c "ALTER SYSTEM SET peql.enabled = '$peql_setting';"
+    if [[ -n "$PEQL_VERBOSITY" ]]; then
+        psql_cmd -c "ALTER SYSTEM SET peql.log_verbosity = '$PEQL_VERBOSITY';"
+    fi
+    if [[ -n "$PEQL_LOG_MIN_DURATION" ]]; then
+        psql_cmd -c "ALTER SYSTEM SET peql.log_min_duration = $PEQL_LOG_MIN_DURATION;"
+    fi
+    psql_cmd -c "SELECT pg_reload_conf();" >/dev/null
+
+    local actual_enabled actual_verbosity actual_min_duration
+    actual_enabled=$(psql_cmd -c "SHOW peql.enabled;")
+    actual_verbosity=$(psql_cmd -c "SHOW peql.log_verbosity;")
+    actual_min_duration=$(psql_cmd -c "SHOW peql.log_min_duration;")
+
+    ok "peql.enabled = $actual_enabled"
+    ok "peql.log_verbosity = $actual_verbosity"
+    ok "peql.log_min_duration = $actual_min_duration"
+
+    # ── reset PEQL log
+    info "Resetting PEQL slow log"
+    psql_cmd -c "SELECT pg_enhanced_query_logging_reset();" >/dev/null 2>&1 \
+        || warn "Could not reset log (extension may not be installed in this database)"
+
+    # ── print configuration for this phase
+    {
+        cat <<EOF
+
+════════════════════════════════════════════════════════════════════════
+  pgbench benchmark — $label
+════════════════════════════════════════════════════════════════════════
+
+  PostgreSQL .............. $PG_VERSION ($PG_HOST:$PG_PORT)
+  Container .............. ${CONTAINER:-"(direct connection)"}
+
+  Workload mode .......... $MODE
+  Clients ................ $CLIENTS
+  Threads ................ $THREADS
+  Duration ............... ${DURATION}s
+  Scale factor ........... $SCALE
+  Protocol ............... $PROTOCOL
+  Rate limit ............. $([ "$RATE" -gt 0 ] && echo "${RATE} TPS" || echo "unlimited")
+
+  peql.enabled ........... $actual_enabled
+  peql.log_verbosity ..... $actual_verbosity
+  peql.log_min_duration .. $actual_min_duration
+
+────────────────────────────────────────────────────────────────────────
+EOF
+    } | tee -a "$RESULTS_FILE"
+
+    # ── run pgbench
+    info "Running pgbench ($MODE, ${CLIENTS}c × ${THREADS}j × ${DURATION}s, protocol=$PROTOCOL)"
+
+    local output_file
+    output_file=$(mktemp /tmp/peql_bench_output.XXXXXX)
+    TMPFILES+=("$output_file")
+
+    set +e
+    pgbench_cmd "${PGBENCH_ARGS[@]}" 2>&1 | tee "$output_file"
+    local pgbench_exit=$?
+    set -e
+
+    if [[ "$pgbench_exit" -ne 0 ]]; then
+        warn "pgbench exited with code $pgbench_exit"
+    fi
+
+    echo "" >> "$RESULTS_FILE"
+    echo "── pgbench output ($label) ──────────────────────────────────────" >> "$RESULTS_FILE"
+    cat "$output_file" >> "$RESULTS_FILE"
+
+    # ── collect PEQL metrics
+    echo ""
+    info "Collecting PEQL metrics"
+
+    local peql_stats queries_logged queries_skipped bytes_written
+    peql_stats=$(psql_cmd -c "SELECT queries_logged, queries_skipped, bytes_written FROM pg_enhanced_query_logging_stats();" 2>/dev/null || echo "||")
+    queries_logged=$(echo "$peql_stats" | cut -d'|' -f1)
+    queries_skipped=$(echo "$peql_stats" | cut -d'|' -f2)
+    bytes_written=$(echo "$peql_stats" | cut -d'|' -f3)
+
+    local log_size="(unknown)" log_entries="(unknown)"
+    if [[ -n "$CONTAINER" ]]; then
+        log_size=$(docker exec "$CONTAINER" bash -c '
+            DATA_DIR=$(psql -U postgres -tAc "SHOW data_directory;")
+            LOG_DIR=$(psql -U postgres -tAc "SHOW log_directory;")
+            LOG_FILE=$(psql -U postgres -tAc "SHOW peql.log_filename;")
+            FILE="${DATA_DIR}/${LOG_DIR}/${LOG_FILE}"
+            if [ -f "$FILE" ]; then
+                stat -c %s "$FILE" 2>/dev/null || stat -f %z "$FILE" 2>/dev/null || echo 0
+            else
+                echo 0
+            fi
+        ' 2>/dev/null || echo "(unknown)")
+
+        log_entries=$(docker exec "$CONTAINER" bash -c '
+            DATA_DIR=$(psql -U postgres -tAc "SHOW data_directory;")
+            LOG_DIR=$(psql -U postgres -tAc "SHOW log_directory;")
+            LOG_FILE=$(psql -U postgres -tAc "SHOW peql.log_filename;")
+            FILE="${DATA_DIR}/${LOG_DIR}/${LOG_FILE}"
+            if [ -f "$FILE" ]; then
+                grep -c "^# Time:" "$FILE" 2>/dev/null || echo 0
+            else
+                echo 0
+            fi
+        ' 2>/dev/null || echo "(unknown)")
+    fi
+
+    # ── extract TPS / latency from pgbench output
+    local tps_incl tps_excl avg_latency latency_stddev txns_processed
+    tps_incl=$(extract "including" "$output_file" | sed -n 's/.*tps = \([0-9.]*\).*including.*/\1/p')
+    tps_excl=$(extract "excluding" "$output_file" | sed -n 's/.*tps = \([0-9.]*\).*excluding.*/\1/p')
+    avg_latency=$(extract "latency average" "$output_file" | sed -n 's/.*latency average = \([0-9.]*\).*/\1/p')
+    latency_stddev=$(extract "latency stddev" "$output_file" | sed -n 's/.*latency stddev = \([0-9.]*\).*/\1/p')
+    txns_processed=$(extract "number of transactions actually processed" "$output_file" | sed -n 's/.*processed: \([0-9]*\).*/\1/p')
+
+    : "${tps_incl:=n/a}"
+    : "${tps_excl:=n/a}"
+    : "${avg_latency:=n/a}"
+    : "${latency_stddev:=n/a}"
+    : "${txns_processed:=n/a}"
+
+    # ── print phase summary
+    {
+        cat <<EOF
+
+════════════════════════════════════════════════════════════════════════
+  Results — $label
+════════════════════════════════════════════════════════════════════════
+
+  TPS (incl. conn) ....... $tps_incl
+  TPS (excl. conn) ....... $tps_excl
+  Avg latency ............ ${avg_latency} ms
+  Latency stddev ......... ${latency_stddev} ms
+  Transactions ........... $txns_processed
+
+  ── PEQL metrics ──
+  Queries logged ......... ${queries_logged:-n/a}
+  Queries skipped ........ ${queries_skipped:-n/a}
+  Bytes written .......... $(format_bytes "${bytes_written:-0}")
+  Log file size .......... $(format_bytes "$log_size")
+  Log entries ............ $log_entries
+
+════════════════════════════════════════════════════════════════════════
+EOF
+    } | tee -a "$RESULTS_FILE"
+
+    # ── store results in global variables for comparison
+    eval "${prefix}_TPS_INCL='$tps_incl'"
+    eval "${prefix}_TPS_EXCL='$tps_excl'"
+    eval "${prefix}_AVG_LATENCY='$avg_latency'"
+    eval "${prefix}_LATENCY_STDDEV='$latency_stddev'"
+    eval "${prefix}_TXNS='$txns_processed'"
+    eval "${prefix}_QUERIES_LOGGED='${queries_logged:-n/a}'"
+    eval "${prefix}_QUERIES_SKIPPED='${queries_skipped:-n/a}'"
+    eval "${prefix}_BYTES_WRITTEN='${bytes_written:-0}'"
+    eval "${prefix}_LOG_SIZE='$log_size'"
+    eval "${prefix}_LOG_ENTRIES='$log_entries'"
+}
+
+# ── temp file cleanup ─────────────────────────────────────────────────
+
+TMPFILES=()
+cleanup_all() {
+    cleanup_write_heavy_script
+    for f in "${TMPFILES[@]}"; do
+        [[ -f "$f" ]] && rm -f "$f"
+    done
+}
+trap cleanup_all EXIT
+
+# ── Phase 1: PEQL ON ──────────────────────────────────────────────────
+
+run_benchmark "PEQL ON" "on"
+
+# ── Phase 2: PEQL OFF ─────────────────────────────────────────────────
+
+run_benchmark "PEQL OFF" "off"
+
+# ── comparison summary ────────────────────────────────────────────────
+
+pct_diff() {
+    local on_val="$1" off_val="$2"
+    if [[ "$on_val" == "n/a" || "$off_val" == "n/a" ]]; then
+        echo "n/a"
+        return
+    fi
+    if [[ $(echo "$off_val == 0" | bc -l) -eq 1 ]]; then
+        echo "n/a"
+        return
+    fi
+    printf "%+.2f%%" "$(echo "scale=4; ($on_val - $off_val) / $off_val * 100" | bc -l)"
+}
+
+print_comparison() {
+    local tps_diff latency_diff
+    tps_diff=$(pct_diff "$ON_TPS_EXCL" "$OFF_TPS_EXCL")
+    latency_diff=$(pct_diff "$ON_AVG_LATENCY" "$OFF_AVG_LATENCY")
+
     cat <<EOF
 
 ════════════════════════════════════════════════════════════════════════
-  Results
+  A/B Comparison — PEQL ON vs PEQL OFF
 ════════════════════════════════════════════════════════════════════════
 
-  TPS (incl. conn) ....... $TPS_INCL
-  TPS (excl. conn) ....... $TPS_EXCL
-  Avg latency ............ ${AVG_LATENCY} ms
-  Latency stddev ......... ${LATENCY_STDDEV} ms
-  Transactions ........... $TXNS_PROCESSED
+                          PEQL ON          PEQL OFF         Delta
+  ─────────────────────────────────────────────────────────────────
+  TPS (excl. conn)        ${ON_TPS_EXCL}$(printf '%*s' $((17 - ${#ON_TPS_EXCL})) '')${OFF_TPS_EXCL}$(printf '%*s' $((17 - ${#OFF_TPS_EXCL})) '')$tps_diff
+  Avg latency (ms)        ${ON_AVG_LATENCY}$(printf '%*s' $((17 - ${#ON_AVG_LATENCY})) '')${OFF_AVG_LATENCY}$(printf '%*s' $((17 - ${#OFF_AVG_LATENCY})) '')$latency_diff
+  Latency stddev (ms)     ${ON_LATENCY_STDDEV}$(printf '%*s' $((17 - ${#ON_LATENCY_STDDEV})) '')${OFF_LATENCY_STDDEV}
+  Transactions            ${ON_TXNS}$(printf '%*s' $((17 - ${#ON_TXNS})) '')${OFF_TXNS}
 
-  ── PEQL metrics ──
-  Queries logged ......... ${QUERIES_LOGGED:-n/a}
-  Queries skipped ........ ${QUERIES_SKIPPED:-n/a}
-  Bytes written .......... $(format_bytes "${BYTES_WRITTEN:-0}")
-  Log file size .......... $(format_bytes "$LOG_SIZE")
-  Log entries ............ $LOG_ENTRIES
+  ── PEQL ON metrics ──
+  Queries logged ......... ${ON_QUERIES_LOGGED}
+  Queries skipped ........ ${ON_QUERIES_SKIPPED}
+  Bytes written .......... $(format_bytes "$ON_BYTES_WRITTEN")
+  Log file size .......... $(format_bytes "$ON_LOG_SIZE")
+  Log entries ............ $ON_LOG_ENTRIES
 
   Results saved to: $RESULTS_FILE
 ════════════════════════════════════════════════════════════════════════
 EOF
 }
 
-print_summary
-print_summary >> "$RESULTS_FILE"
+print_comparison | tee -a "$RESULTS_FILE"
 
-ok "Benchmark complete"
+ok "Benchmark complete (results saved to $RESULTS_FILE)"
