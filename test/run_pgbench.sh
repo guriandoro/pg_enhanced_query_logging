@@ -439,11 +439,10 @@ EOF
     echo ""
     info "Collecting PEQL metrics"
 
-    local peql_stats queries_logged queries_skipped bytes_written
-    peql_stats=$(psql_cmd -c "SELECT queries_logged, queries_skipped, bytes_written FROM pg_enhanced_query_logging_stats();" 2>/dev/null || echo "||")
+    local peql_stats queries_logged queries_skipped
+    peql_stats=$(psql_cmd -c "SELECT queries_logged, queries_skipped FROM pg_enhanced_query_logging_stats();" 2>/dev/null || echo "|")
     queries_logged=$(echo "$peql_stats" | cut -d'|' -f1)
     queries_skipped=$(echo "$peql_stats" | cut -d'|' -f2)
-    bytes_written=$(echo "$peql_stats" | cut -d'|' -f3)
 
     local log_size="(unknown)" log_entries="(unknown)"
     if [[ -n "$CONTAINER" ]]; then
@@ -508,7 +507,6 @@ EOF
   ── PEQL metrics ──
   Queries logged ......... ${queries_logged:-n/a}
   Queries skipped ........ ${queries_skipped:-n/a}
-  Bytes written .......... $(format_bytes "${bytes_written:-0}")
   Log file size .......... $(format_bytes "$log_size")
   Log entries ............ $log_entries
 
@@ -524,7 +522,6 @@ EOF
     eval "${prefix}_TXNS='$txns_processed'"
     eval "${prefix}_QUERIES_LOGGED='${queries_logged:-n/a}'"
     eval "${prefix}_QUERIES_SKIPPED='${queries_skipped:-n/a}'"
-    eval "${prefix}_BYTES_WRITTEN='${bytes_written:-0}'"
     eval "${prefix}_LOG_SIZE='$log_size'"
     eval "${prefix}_LOG_ENTRIES='$log_entries'"
 }
@@ -594,14 +591,12 @@ print_comparison() {
   ── PEQL ON metrics ──
   Queries logged ......... ${ON_QUERIES_LOGGED}
   Queries skipped ........ ${ON_QUERIES_SKIPPED}
-  Bytes written .......... $(format_bytes "$ON_BYTES_WRITTEN")
   Log file size .......... $(format_bytes "$ON_LOG_SIZE")
   Log entries ............ $ON_LOG_ENTRIES
 
   ── PEQL ON (1% rate limit) metrics ──
   Queries logged ......... ${RATE_QUERIES_LOGGED}
   Queries skipped ........ ${RATE_QUERIES_SKIPPED}
-  Bytes written .......... $(format_bytes "$RATE_BYTES_WRITTEN")
   Log file size .......... $(format_bytes "$RATE_LOG_SIZE")
   Log entries ............ $RATE_LOG_ENTRIES
 
