@@ -593,13 +593,6 @@ print_comparison() {
   Log file size .......... $(format_bytes "$ON_LOG_SIZE")
   Log entries ............ $ON_LOG_ENTRIES
 
-  ── PEQL OFF metrics ──
-  Queries logged ......... ${OFF_QUERIES_LOGGED}
-  Queries skipped ........ ${OFF_QUERIES_SKIPPED}
-  Bytes written .......... $(format_bytes "$OFF_BYTES_WRITTEN")
-  Log file size .......... $(format_bytes "$OFF_LOG_SIZE")
-  Log entries ............ $OFF_LOG_ENTRIES
-
   ── PEQL ON (1% rate limit) metrics ──
   Queries logged ......... ${RATE_QUERIES_LOGGED}
   Queries skipped ........ ${RATE_QUERIES_SKIPPED}
