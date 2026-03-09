@@ -14,7 +14,7 @@
 #
 # ── Core pgbench settings ──────────────────────────────────────────────
 #   PEQL_BENCH_CLIENTS      Number of concurrent connections      (default: 10)
-#   PEQL_BENCH_DURATION     Runtime in seconds                    (default: 60)
+#   PEQL_BENCH_DURATION     Runtime in seconds                    (default: 600)
 #   PEQL_BENCH_MODE         Workload type:
 #                             read-only   — SELECT-only (pgbench -S)
 #                             read-write  — default TPC-B mix
@@ -99,7 +99,7 @@ PG_USER="${PEQL_PG_USER:-postgres}"
 PG_DATABASE="${PEQL_PG_DATABASE:-postgres}"
 
 CLIENTS="${PEQL_BENCH_CLIENTS:-10}"
-DURATION="${PEQL_BENCH_DURATION:-60}"
+DURATION="${PEQL_BENCH_DURATION:-600}"
 MODE="${PEQL_BENCH_MODE:-read-write}"
 SCALE="${PEQL_BENCH_SCALE:-100}"
 RATE="${PEQL_BENCH_RATE:-0}"
