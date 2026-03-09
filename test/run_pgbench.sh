@@ -5,9 +5,11 @@
 # pg_enhanced_query_logging under configurable concurrency and workload
 # scenarios.
 #
-# The script performs an A/B comparison by running pgbench twice:
-#   Phase 1 — PEQL ON:  peql.enabled = on  (measures extension overhead)
-#   Phase 2 — PEQL OFF: peql.enabled = off (baseline without the extension)
+# The script performs an A/B/C comparison by running pgbench three times:
+#   Phase 1 — PEQL ON:       peql.enabled = on  (measures extension overhead)
+#   Phase 2 — PEQL OFF:      peql.enabled = off (baseline without the extension)
+#   Phase 3 — PEQL ON (1%):  peql.enabled = on, peql.rate_limit = 100
+#                             (measures overhead with 1% query sampling)
 # A comparison summary with deltas is printed at the end.
 #
 # Usage:
@@ -286,15 +288,16 @@ extract() {
 # ── run_benchmark: configure, run pgbench, collect metrics ────────────
 #
 # Arguments:
-#   $1 — run label (e.g. "PEQL ON", "PEQL OFF")
+#   $1 — run label (e.g. "PEQL ON", "PEQL OFF", "PEQL ON (1%)")
 #   $2 — peql.enabled value ("on" or "off")
+#   $3 — variable prefix for storing results (e.g. "ON", "OFF", "RATE")
+#   $4 — (optional) extra SQL to run after enabling PEQL (e.g. rate limit GUCs)
 #
-# Sets result variables with a prefix (ON_ or OFF_) for later comparison.
+# Sets result variables with the given prefix for later comparison.
 
 run_benchmark() {
-    local label="$1" peql_setting="$2"
-    local prefix
-    [[ "$peql_setting" == "on" ]] && prefix="ON" || prefix="OFF"
+    local label="$1" peql_setting="$2" prefix="$3"
+    local extra_sql="${4:-}"
 
     echo ""
     info "════════════════════════════════════════════════════════════════"
@@ -304,22 +307,31 @@ run_benchmark() {
     # ── configure PEQL
     info "Configuring PEQL extension (peql.enabled = $peql_setting)"
     psql_cmd -c "ALTER SYSTEM SET peql.enabled = '$peql_setting';"
+    psql_cmd -c "ALTER SYSTEM SET peql.rate_limit = 1;"
+    psql_cmd -c "ALTER SYSTEM SET peql.rate_limit_type = 'query';"
     if [[ -n "$PEQL_VERBOSITY" ]]; then
         psql_cmd -c "ALTER SYSTEM SET peql.log_verbosity = '$PEQL_VERBOSITY';"
     fi
     if [[ -n "$PEQL_LOG_MIN_DURATION" ]]; then
         psql_cmd -c "ALTER SYSTEM SET peql.log_min_duration = $PEQL_LOG_MIN_DURATION;"
     fi
+    if [[ -n "$extra_sql" ]]; then
+        psql_cmd -c "$extra_sql"
+    fi
     psql_cmd -c "SELECT pg_reload_conf();" >/dev/null
 
-    local actual_enabled actual_verbosity actual_min_duration
+    local actual_enabled actual_verbosity actual_min_duration actual_rate_limit actual_rate_limit_type
     actual_enabled=$(psql_cmd -c "SHOW peql.enabled;")
     actual_verbosity=$(psql_cmd -c "SHOW peql.log_verbosity;")
     actual_min_duration=$(psql_cmd -c "SHOW peql.log_min_duration;")
+    actual_rate_limit=$(psql_cmd -c "SHOW peql.rate_limit;")
+    actual_rate_limit_type=$(psql_cmd -c "SHOW peql.rate_limit_type;")
 
     ok "peql.enabled = $actual_enabled"
     ok "peql.log_verbosity = $actual_verbosity"
     ok "peql.log_min_duration = $actual_min_duration"
+    ok "peql.rate_limit = $actual_rate_limit"
+    ok "peql.rate_limit_type = $actual_rate_limit_type"
 
     # ── reset PEQL log
     info "Resetting PEQL slow log"
@@ -348,6 +360,8 @@ run_benchmark() {
   peql.enabled ........... $actual_enabled
   peql.log_verbosity ..... $actual_verbosity
   peql.log_min_duration .. $actual_min_duration
+  peql.rate_limit ........ $actual_rate_limit
+  peql.rate_limit_type ... $actual_rate_limit_type
 
 ────────────────────────────────────────────────────────────────────────
 EOF
@@ -475,11 +489,16 @@ trap cleanup_all EXIT
 
 # ── Phase 1: PEQL ON ──────────────────────────────────────────────────
 
-run_benchmark "PEQL ON" "on"
+run_benchmark "PEQL ON" "on" "ON"
 
 # ── Phase 2: PEQL OFF ─────────────────────────────────────────────────
 
-run_benchmark "PEQL OFF" "off"
+run_benchmark "PEQL OFF" "off" "OFF"
+
+# ── Phase 3: PEQL ON with 1% rate limit ──────────────────────────────
+
+run_benchmark "PEQL ON (1% rate limit)" "on" "RATE" \
+    "ALTER SYSTEM SET peql.rate_limit = 100; ALTER SYSTEM SET peql.rate_limit_type = 'query'; ALTER SYSTEM SET peql.log_min_duration = 0;"
 
 # ── comparison summary ────────────────────────────────────────────────
 
@@ -496,23 +515,28 @@ pct_diff() {
     printf "%+.2f%%" "$(echo "scale=4; ($on_val - $off_val) / $off_val * 100" | bc -l)"
 }
 
-print_comparison() {
-    local tps_diff latency_diff
-    tps_diff=$(pct_diff "$ON_TPS_EXCL" "$OFF_TPS_EXCL")
-    latency_diff=$(pct_diff "$ON_AVG_LATENCY" "$OFF_AVG_LATENCY")
+pad() { printf '%*s' $(( $1 - ${#2} )) ''; }
 
+print_comparison() {
+    local on_off_tps_diff on_off_lat_diff rate_off_tps_diff rate_off_lat_diff
+    on_off_tps_diff=$(pct_diff "$ON_TPS_EXCL" "$OFF_TPS_EXCL")
+    on_off_lat_diff=$(pct_diff "$ON_AVG_LATENCY" "$OFF_AVG_LATENCY")
+    rate_off_tps_diff=$(pct_diff "$RATE_TPS_EXCL" "$OFF_TPS_EXCL")
+    rate_off_lat_diff=$(pct_diff "$RATE_AVG_LATENCY" "$OFF_AVG_LATENCY")
+
+    local W=15
     cat <<EOF
 
-════════════════════════════════════════════════════════════════════════
-  A/B Comparison — PEQL ON vs PEQL OFF
-════════════════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════════════════════════════════
+  A/B/C Comparison — PEQL ON vs PEQL OFF vs PEQL ON (1% rate limit)
+════════════════════════════════════════════════════════════════════════════════════════
 
-                          PEQL ON          PEQL OFF         Delta
-  ─────────────────────────────────────────────────────────────────
-  TPS (excl. conn)        ${ON_TPS_EXCL}$(printf '%*s' $((17 - ${#ON_TPS_EXCL})) '')${OFF_TPS_EXCL}$(printf '%*s' $((17 - ${#OFF_TPS_EXCL})) '')$tps_diff
-  Avg latency (ms)        ${ON_AVG_LATENCY}$(printf '%*s' $((17 - ${#ON_AVG_LATENCY})) '')${OFF_AVG_LATENCY}$(printf '%*s' $((17 - ${#OFF_AVG_LATENCY})) '')$latency_diff
-  Latency stddev (ms)     ${ON_LATENCY_STDDEV}$(printf '%*s' $((17 - ${#ON_LATENCY_STDDEV})) '')${OFF_LATENCY_STDDEV}
-  Transactions            ${ON_TXNS}$(printf '%*s' $((17 - ${#ON_TXNS})) '')${OFF_TXNS}
+                          PEQL ON$(pad $W "PEQL ON")PEQL OFF$(pad $W "PEQL OFF")PEQL ON 1%$(pad $W "PEQL ON 1%")ON vs OFF$(pad $W "ON vs OFF")1% vs OFF
+  ───────────────────────────────────────────────────────────────────────────────────
+  TPS (excl. conn)        ${ON_TPS_EXCL}$(pad $W "$ON_TPS_EXCL")${OFF_TPS_EXCL}$(pad $W "$OFF_TPS_EXCL")${RATE_TPS_EXCL}$(pad $W "$RATE_TPS_EXCL")${on_off_tps_diff}$(pad $W "$on_off_tps_diff")${rate_off_tps_diff}
+  Avg latency (ms)        ${ON_AVG_LATENCY}$(pad $W "$ON_AVG_LATENCY")${OFF_AVG_LATENCY}$(pad $W "$OFF_AVG_LATENCY")${RATE_AVG_LATENCY}$(pad $W "$RATE_AVG_LATENCY")${on_off_lat_diff}$(pad $W "$on_off_lat_diff")${rate_off_lat_diff}
+  Latency stddev (ms)     ${ON_LATENCY_STDDEV}$(pad $W "$ON_LATENCY_STDDEV")${OFF_LATENCY_STDDEV}$(pad $W "$OFF_LATENCY_STDDEV")${RATE_LATENCY_STDDEV}
+  Transactions            ${ON_TXNS}$(pad $W "$ON_TXNS")${OFF_TXNS}$(pad $W "$OFF_TXNS")${RATE_TXNS}
 
   ── PEQL ON metrics ──
   Queries logged ......... ${ON_QUERIES_LOGGED}
@@ -521,8 +545,15 @@ print_comparison() {
   Log file size .......... $(format_bytes "$ON_LOG_SIZE")
   Log entries ............ $ON_LOG_ENTRIES
 
+  ── PEQL ON (1% rate limit) metrics ──
+  Queries logged ......... ${RATE_QUERIES_LOGGED}
+  Queries skipped ........ ${RATE_QUERIES_SKIPPED}
+  Bytes written .......... $(format_bytes "$RATE_BYTES_WRITTEN")
+  Log file size .......... $(format_bytes "$RATE_LOG_SIZE")
+  Log entries ............ $RATE_LOG_ENTRIES
+
   Results saved to: $RESULTS_FILE
-════════════════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════════════════════════════════
 EOF
 }
 
