@@ -59,7 +59,7 @@ jobs:
             echo "shared_preload_libraries = 'pg_enhanced_query_logging'" | \
               sudo tee -a /etc/postgresql/${{ matrix.pg_version }}/test/postgresql.conf
             sudo pg_ctlcluster ${{ matrix.pg_version }} test start
-            export PGHOST=/var/run/postgresql
+            echo "PGHOST=/var/run/postgresql" >> "$GITHUB_ENV"
           else
             PGDATA="$(pwd)/pgdata"
             initdb -D "$PGDATA" -A trust
