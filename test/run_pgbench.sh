@@ -164,6 +164,23 @@ pgbench_cmd() {
     pgbench -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" "$@"
 }
 
+restart_pg() {
+    if [[ -z "$CONTAINER" ]]; then
+        fail "Cannot restart PostgreSQL: no container detected (phases 4-5 require Docker)"
+    fi
+    info "Restarting PostgreSQL inside container $CONTAINER"
+    docker restart "$CONTAINER"
+    local retries=30
+    while ! psql_cmd -c "SELECT 1;" >/dev/null 2>&1; do
+        retries=$((retries - 1))
+        if [[ "$retries" -le 0 ]]; then
+            fail "PostgreSQL did not become ready after restart"
+        fi
+        sleep 1
+    done
+    ok "PostgreSQL is ready"
+}
+
 # -- validate ------------------------------------------------------------
 
 info "Validating connection to PostgreSQL at $PG_HOST:$PG_PORT"
