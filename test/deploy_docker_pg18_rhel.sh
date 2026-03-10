@@ -88,7 +88,7 @@ if [ "${1:-}" = "teardown" ]; then
     docker rm -f "$PMM_CLIENT_CONTAINER" 2>/dev/null || true
     ok "PMM client removed"
 
-    if ! docker network inspect "$DOCKER_NETWORK" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | grep -q '[a-z]'; then
+    if ! docker network inspect "$DOCKER_NETWORK" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | grep -v "$PMM_CONTAINER" | grep -q '[a-z]'; then
         info "Removing PMM server container $PMM_CONTAINER"
         docker rm -f "$PMM_CONTAINER" 2>/dev/null || true
         ok "PMM server removed"
