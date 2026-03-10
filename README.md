@@ -108,7 +108,7 @@ The `test/` directory includes scripts to spin up a fully configured Docker envi
 PEQL_BENCH_DURATION=120 ./test/run_pgbench.sh
 ```
 
-The deploy script also starts a PMM server and client so you can monitor PostgreSQL in real time. Once it finishes, it prints connection details:
+The deploy scripts also apply PostgreSQL performance tuning for the 50 GB container (memory, WAL/checkpoints, parallelism, connections, and background writer) so the server can handle read and write heavy workloads out of the box. They also start a PMM server and client so you can monitor PostgreSQL in real time. Once it finishes, it prints connection details:
 
 ```
 Connect:      PGPASSWORD=peqltest psql -h localhost -p 15433 -U postgres
