@@ -585,7 +585,7 @@ run_benchmark_no_peql() {
     info "Removing pg_enhanced_query_logging from shared_preload_libraries"
     docker exec "$CONTAINER" bash -c '
         PGCONF="$(psql -U postgres -tAc "SHOW config_file;")"
-        sed -i "s/pg_enhanced_query_logging,\?//g; s/,\+/,/g; s/,'/'/g; s/='\'',/='\''/g" "$PGCONF"
+        sed -i "/^shared_preload_libraries/{ s/pg_enhanced_query_logging,\?//g; s/,\+/,/g; s/,'\''/'\''/g; s/='\'',/='\''/g; }" "$PGCONF"
     '
 
     # -- disable PEQL GUCs so they do not cause errors after unload
