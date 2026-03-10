@@ -25,7 +25,7 @@ The extension hooks into the executor pipeline to capture timing, buffer I/O, WA
 - **[Memory context tracking](doc/compatibility.md)** -- experimental per-query memory allocation measurement ([why experimental?](doc/compatibility.md))
 - **[Utility statement logging](doc/configuration.md#statement-filtering)** -- optional logging of DDL (Data Definition Language) and other utility statements
 - **[Nested statement logging](doc/configuration.md#statement-filtering)** -- optional logging of statements inside PL/pgSQL functions
-- **[Parameter value logging](doc/configuration.md#query-plan-and-parameters)** -- optional inclusion of bind parameter values
+- **[Parameter value logging](doc/configuration.md#query-plan-and-parameters)** -- optional inclusion of bind parameter values from prepared statements and parameterized queries in log entries
 - **[EXPLAIN plan inclusion](doc/configuration.md#query-plan-and-parameters)** -- optional EXPLAIN ANALYZE output embedded in the log entry
 
 ## Requirements
