@@ -30,8 +30,7 @@ RUN dnf -y install \
         libxml2-devel \
         lz4-devel \
         curl \
-        perl \
-        perl-English && \
+        perl-core && \
     dnf clean all
 
 ENV PATH="/usr/pgsql-${PG_MAJOR}/bin:${PATH}" \
