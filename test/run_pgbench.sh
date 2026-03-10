@@ -6,9 +6,9 @@
 # scenarios.
 #
 # The script performs an A/B/C comparison by running pgbench three times:
-#   Phase 1 — PEQL ON:       peql.enabled = on  (measures extension overhead)
-#   Phase 2 — PEQL OFF:      peql.enabled = off (baseline without the extension)
-#   Phase 3 — PEQL ON (1%):  peql.enabled = on, peql.rate_limit = 100
+#   Phase 1 -- PEQL ON:       peql.enabled = on  (measures extension overhead)
+#   Phase 2 -- PEQL OFF:      peql.enabled = off (baseline without the extension)
+#   Phase 3 -- PEQL ON (1%):  peql.enabled = on, peql.rate_limit = 100
 #                             (measures overhead with 1% query sampling)
 # A comparison summary with deltas is printed at the end.
 #
@@ -19,16 +19,16 @@
 #
 # All settings are controlled via environment variables (see below).
 #
-# ── Core pgbench settings ──────────────────────────────────────────────
+# -- Core pgbench settings ----------------------------------------------
 #   PEQL_BENCH_CLIENTS      Number of concurrent connections      (default: 10)
 #   PEQL_BENCH_DURATION     Runtime in seconds                    (default: 600)
 #   PEQL_BENCH_MODE         Workload type:
-#                             read-only   — SELECT-only (pgbench -S)
-#                             read-write  — default TPC-B mix
-#                             write-heavy — custom INSERT/UPDATE-heavy script
+#                             read-only   -- SELECT-only (pgbench -S)
+#                             read-write  -- default TPC-B mix
+#                             write-heavy -- custom INSERT/UPDATE-heavy script
 #                           (default: read-write)
 #
-# ── Additional pgbench settings ────────────────────────────────────────
+# -- Additional pgbench settings ----------------------------------------
 #   PEQL_BENCH_THREADS      pgbench threads (default: min(clients, nproc))
 #   PEQL_BENCH_SCALE        Scale factor for pgbench -i           (default: 100)
 #   PEQL_BENCH_RATE          Target TPS rate limit; 0 = unlimited (default: 0)
@@ -37,15 +37,15 @@
 #   PEQL_BENCH_CUSTOM_SCRIPT  Path to a custom pgbench script     (optional)
 #   PEQL_BENCH_INIT         Force (re-)initialization of pgbench
 #                           tables: yes | no | auto
-#                           (default: auto — init if tables are missing)
+#                           (default: auto -- init if tables are missing)
 #
-# ── PEQL extension settings (applied during the PEQL ON phase) ────────
+# -- PEQL extension settings (applied during the PEQL ON phase) --------
 #   PEQL_BENCH_VERBOSITY         minimal | standard | full
 #                                (default: current server setting)
 #   PEQL_BENCH_LOG_MIN_DURATION  peql.log_min_duration value
 #                                (default: current server setting)
 #
-# ── Connection settings ────────────────────────────────────────────────
+# -- Connection settings ------------------------------------------------
 #   PEQL_PG_HOST            PostgreSQL host     (default: localhost)
 #   PEQL_PG_PORT            PostgreSQL port     (default: auto-detected
 #                           from running container, or 15432)
@@ -55,21 +55,21 @@
 #
 set -euo pipefail
 
-# ── help ────────────────────────────────────────────────────────────────
+# -- help ----------------------------------------------------------------
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     sed -n '2,/^[^#]/{ /^#/s/^# \?//p }' "$0"
     exit 0
 fi
 
-# ── helpers ─────────────────────────────────────────────────────────────
+# -- helpers -------------------------------------------------------------
 
 info()  { printf '\033[1;34m==> %s\033[0m\n' "$*"; }
-ok()    { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
+ok()    { printf '\033[1;32m  + %s\033[0m\n' "$*"; }
 warn()  { printf '\033[1;33m  ! %s\033[0m\n' "$*"; }
-fail()  { printf '\033[1;31m  ✗ %s\033[0m\n' "$*"; exit 1; }
+fail()  { printf '\033[1;31m  x %s\033[0m\n' "$*"; exit 1; }
 
-# ── PMM annotation helper ────────────────────────────────────────────────
+# -- PMM annotation helper ------------------------------------------------
 
 detect_pmm_client() {
     for name in peql-pmm-client peql-pmm-client-rhel; do
@@ -91,11 +91,11 @@ pmm_annotate() {
             && ok "Annotation created" \
             || warn "Failed to create PMM annotation (non-fatal)"
     else
-        warn "No PMM client container running — skipping annotation"
+        warn "No PMM client container running -- skipping annotation"
     fi
 }
 
-# ── detect container and auto-resolve port ──────────────────────────────
+# -- detect container and auto-resolve port ------------------------------
 
 detect_container() {
     for name in peql-pg18-test peql-pg18-rhel-test; do
@@ -122,7 +122,7 @@ if [[ -z "${PEQL_PG_PORT:-}" && -n "$CONTAINER" ]]; then
     fi
 fi
 
-# ── configuration ───────────────────────────────────────────────────────
+# -- configuration -------------------------------------------------------
 
 PG_HOST="${PEQL_PG_HOST:-localhost}"
 PG_PORT="${PEQL_PG_PORT:-${AUTO_PORT:-15432}}"
@@ -159,7 +159,7 @@ pgbench_cmd() {
     pgbench -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" "$@"
 }
 
-# ── validate ────────────────────────────────────────────────────────────
+# -- validate ------------------------------------------------------------
 
 info "Validating connection to PostgreSQL at $PG_HOST:$PG_PORT"
 if ! psql_cmd -c "SELECT 1;" >/dev/null 2>&1; then
@@ -170,7 +170,7 @@ ok "PostgreSQL is reachable"
 PG_VERSION=$(psql_cmd -c "SHOW server_version;")
 info "Server version: $PG_VERSION"
 
-# ── validate settings ───────────────────────────────────────────────────
+# -- validate settings ---------------------------------------------------
 
 case "$MODE" in
     read-only|read-write|write-heavy) ;;
@@ -189,7 +189,7 @@ if [[ -n "$PEQL_VERBOSITY" ]]; then
     esac
 fi
 
-# ── pgbench initialization ──────────────────────────────────────────────
+# -- pgbench initialization ----------------------------------------------
 
 needs_init() {
     local count
@@ -198,7 +198,7 @@ needs_init() {
 }
 
 do_init() {
-    info "Initializing pgbench data (scale=$SCALE) — this may take a while"
+    info "Initializing pgbench data (scale=$SCALE) -- this may take a while"
     pgbench_cmd -i -s "$SCALE" --no-vacuum 2>&1
     ok "pgbench data initialized (scale=$SCALE)"
 }
@@ -220,7 +220,7 @@ case "$INIT_MODE" in
         ;;
 esac
 
-# ── write-heavy custom script ──────────────────────────────────────────
+# -- write-heavy custom script ------------------------------------------
 
 WRITE_HEAVY_SCRIPT=""
 
@@ -251,7 +251,7 @@ cleanup_write_heavy_script() {
 }
 trap cleanup_write_heavy_script EXIT
 
-# ── build pgbench args ─────────────────────────────────────────────────
+# -- build pgbench args -------------------------------------------------
 
 PGBENCH_ARGS=(
     -c "$CLIENTS"
@@ -277,13 +277,13 @@ elif [[ "$MODE" == "write-heavy" ]]; then
     PGBENCH_ARGS+=(-f "$WRITE_HEAVY_SCRIPT")
 fi
 
-# ── results file ───────────────────────────────────────────────────────
+# -- results file -------------------------------------------------------
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 mkdir -p "$RESULTS_DIR"
 RESULTS_FILE="$RESULTS_DIR/bench_${MODE}_c${CLIENTS}_t${DURATION}s_${TIMESTAMP}.txt"
 
-# ── helper: format bytes ──────────────────────────────────────────────
+# -- helper: format bytes ----------------------------------------------
 
 format_bytes() {
     local bytes=$1
@@ -302,7 +302,7 @@ format_bytes() {
     fi
 }
 
-# ── helper: extract value from pgbench output ─────────────────────────
+# -- helper: extract value from pgbench output -------------------------
 
 extract() {
     local pattern="$1" file="$2"
@@ -311,13 +311,13 @@ extract() {
     echo "$val"
 }
 
-# ── run_benchmark: configure, run pgbench, collect metrics ────────────
+# -- run_benchmark: configure, run pgbench, collect metrics ------------
 #
 # Arguments:
-#   $1 — run label (e.g. "PEQL ON", "PEQL OFF", "PEQL ON (1%)")
-#   $2 — peql.enabled value ("on" or "off")
-#   $3 — variable prefix for storing results (e.g. "ON", "OFF", "RATE")
-#   $4 — (optional) extra SQL to run after enabling PEQL (e.g. rate limit GUCs)
+#   $1 -- run label (e.g. "PEQL ON", "PEQL OFF", "PEQL ON (1%)")
+#   $2 -- peql.enabled value ("on" or "off")
+#   $3 -- variable prefix for storing results (e.g. "ON", "OFF", "RATE")
+#   $4 -- (optional) extra SQL to run after enabling PEQL (e.g. rate limit GUCs)
 #
 # Sets result variables with the given prefix for later comparison.
 
@@ -326,11 +326,11 @@ run_benchmark() {
     local extra_sql="${4:-}"
 
     echo ""
-    info "════════════════════════════════════════════════════════════════"
+    info "================================================================"
     info "  Phase: $label (peql.enabled = $peql_setting)"
-    info "════════════════════════════════════════════════════════════════"
+    info "================================================================"
 
-    # ── configure PEQL
+    # -- configure PEQL
     info "Configuring PEQL extension (peql.enabled = $peql_setting)"
     psql_cmd -c "ALTER SYSTEM SET peql.enabled = '$peql_setting';"
     psql_cmd -c "ALTER SYSTEM SET peql.rate_limit = 1;"
@@ -366,18 +366,18 @@ run_benchmark() {
     ok "peql.rate_limit = $actual_rate_limit"
     ok "peql.rate_limit_type = $actual_rate_limit_type"
 
-    # ── reset PEQL log
+    # -- reset PEQL log
     info "Resetting PEQL slow log"
     psql_cmd -c "SELECT pg_enhanced_query_logging_reset();" >/dev/null 2>&1 \
         || warn "Could not reset log (extension may not be installed in this database)"
 
-    # ── print configuration for this phase
+    # -- print configuration for this phase
     {
         cat <<EOF
 
-════════════════════════════════════════════════════════════════════════
-  pgbench benchmark — $label
-════════════════════════════════════════════════════════════════════════
+========================================================================
+  pgbench benchmark -- $label
+========================================================================
 
   PostgreSQL .............. $PG_VERSION ($PG_HOST:$PG_PORT)
   Container .............. ${CONTAINER:-"(direct connection)"}
@@ -396,11 +396,11 @@ run_benchmark() {
   peql.rate_limit ........ $actual_rate_limit
   peql.rate_limit_type ... $actual_rate_limit_type
 
-────────────────────────────────────────────────────────────────────────
+------------------------------------------------------------------------
 EOF
     } | tee -a "$RESULTS_FILE"
 
-    # ── force checkpoint and drop OS page cache to avoid background I/O
+    # -- force checkpoint and drop OS page cache to avoid background I/O
     info "Running CHECKPOINT"
     psql_cmd -c "CHECKPOINT;" >/dev/null
     if [[ -n "$CONTAINER" ]]; then
@@ -410,11 +410,11 @@ EOF
             || warn "Could not drop page cache (non-fatal, may lack privileges)"
     fi
 
-    # ── PMM annotation
-    pmm_annotate "pgbench START — $label | ${MODE} ${CLIENTS}c ${DURATION}s"
+    # -- PMM annotation
+    pmm_annotate "pgbench START -- $label | ${MODE} ${CLIENTS}c ${DURATION}s"
 
-    # ── run pgbench
-    info "Running pgbench ($MODE, ${CLIENTS}c × ${THREADS}j × ${DURATION}s, protocol=$PROTOCOL)"
+    # -- run pgbench
+    info "Running pgbench ($MODE, ${CLIENTS}c x ${THREADS}j x ${DURATION}s, protocol=$PROTOCOL)"
 
     local output_file
     output_file=$(mktemp /tmp/peql_bench_output.XXXXXX)
@@ -429,13 +429,13 @@ EOF
         warn "pgbench exited with code $pgbench_exit"
     fi
 
-    pmm_annotate "pgbench END — $label | exit=$pgbench_exit"
+    pmm_annotate "pgbench END -- $label | exit=$pgbench_exit"
 
     echo "" >> "$RESULTS_FILE"
-    echo "── pgbench output ($label) ──────────────────────────────────────" >> "$RESULTS_FILE"
+    echo "-- pgbench output ($label) --------------------------------------" >> "$RESULTS_FILE"
     cat "$output_file" >> "$RESULTS_FILE"
 
-    # ── collect PEQL metrics
+    # -- collect PEQL metrics
     echo ""
     info "Collecting PEQL metrics"
 
@@ -471,7 +471,7 @@ EOF
         ' 2>/dev/null || echo "(unknown)")
     fi
 
-    # ── extract TPS / latency from pgbench output
+    # -- extract TPS / latency from pgbench output
     local tps_incl tps_excl avg_latency latency_stddev txns_processed
     tps_incl=$(sed -n 's/.*tps = \([0-9.]*\).*including.*/\1/p' "$output_file" | head -1)
     tps_excl=$(sed -n 's/.*tps = \([0-9.]*\).*excluding.*/\1/p' "$output_file" | head -1)
@@ -490,13 +490,13 @@ EOF
     : "${latency_stddev:=n/a}"
     : "${txns_processed:=n/a}"
 
-    # ── print phase summary
+    # -- print phase summary
     {
         cat <<EOF
 
-════════════════════════════════════════════════════════════════════════
-  Results — $label
-════════════════════════════════════════════════════════════════════════
+========================================================================
+  Results -- $label
+========================================================================
 
   TPS (incl. conn) ....... $tps_incl
   TPS (excl. conn) ....... $tps_excl
@@ -504,17 +504,17 @@ EOF
   Latency stddev ......... ${latency_stddev} ms
   Transactions ........... $txns_processed
 
-  ── PEQL metrics ──
+  -- PEQL metrics --
   Queries logged ......... ${queries_logged:-n/a}
   Queries skipped ........ ${queries_skipped:-n/a}
   Log file size .......... $(format_bytes "$log_size")
   Log entries ............ $log_entries
 
-════════════════════════════════════════════════════════════════════════
+========================================================================
 EOF
     } | tee -a "$RESULTS_FILE"
 
-    # ── store results in global variables for comparison
+    # -- store results in global variables for comparison
     eval "${prefix}_TPS_INCL='$tps_incl'"
     eval "${prefix}_TPS_EXCL='$tps_excl'"
     eval "${prefix}_AVG_LATENCY='$avg_latency'"
@@ -526,7 +526,7 @@ EOF
     eval "${prefix}_LOG_ENTRIES='$log_entries'"
 }
 
-# ── temp file cleanup ─────────────────────────────────────────────────
+# -- temp file cleanup -------------------------------------------------
 
 TMPFILES=()
 cleanup_all() {
@@ -537,20 +537,20 @@ cleanup_all() {
 }
 trap cleanup_all EXIT
 
-# ── Phase 1: PEQL ON ──────────────────────────────────────────────────
+# -- Phase 1: PEQL ON --------------------------------------------------
 
 run_benchmark "PEQL ON" "on" "ON"
 
-# ── Phase 2: PEQL OFF ─────────────────────────────────────────────────
+# -- Phase 2: PEQL OFF -------------------------------------------------
 
 run_benchmark "PEQL OFF" "off" "OFF"
 
-# ── Phase 3: PEQL ON with 1% rate limit ──────────────────────────────
+# -- Phase 3: PEQL ON with 1% rate limit ------------------------------
 
 run_benchmark "PEQL ON (1% rate limit)" "on" "RATE" \
     "ALTER SYSTEM SET peql.rate_limit = 100; ALTER SYSTEM SET peql.rate_limit_type = 'query'; ALTER SYSTEM SET peql.log_min_duration = 0;"
 
-# ── comparison summary ────────────────────────────────────────────────
+# -- comparison summary ------------------------------------------------
 
 pct_diff() {
     local on_val="$1" off_val="$2"
@@ -581,13 +581,13 @@ print_comparison() {
 
     local total_w=$(( L + 2 + (C + 1) * 5 ))
     local sep
-    sep="  $(printf '%*s' "$total_w" '' | tr ' ' '─')"
+    sep="  $(printf '%*s' "$total_w" '' | tr ' ' '-')"
 
     cat <<EOF
 
-════════════════════════════════════════════════════════════════════════════════════════════
-  A/B/C Comparison — PEQL ON vs PEQL OFF vs PEQL ON (1% rate limit)
-════════════════════════════════════════════════════════════════════════════════════════════
+============================================================================================
+  A/B/C Comparison -- PEQL ON vs PEQL OFF vs PEQL ON (1% rate limit)
+============================================================================================
 
 EOF
     printf "$hdr_fmt" "" "PEQL ON" "PEQL OFF" "PEQL ON 1%" "ON vs OFF" "1% vs OFF"
@@ -599,20 +599,20 @@ EOF
 
     cat <<EOF
 
-  ── PEQL ON metrics ──
+  -- PEQL ON metrics --
   Queries logged ......... ${ON_QUERIES_LOGGED}
   Queries skipped ........ ${ON_QUERIES_SKIPPED}
   Log file size .......... $(format_bytes "$ON_LOG_SIZE")
   Log entries ............ $ON_LOG_ENTRIES
 
-  ── PEQL ON (1% rate limit) metrics ──
+  -- PEQL ON (1% rate limit) metrics --
   Queries logged ......... ${RATE_QUERIES_LOGGED}
   Queries skipped ........ ${RATE_QUERIES_SKIPPED}
   Log file size .......... $(format_bytes "$RATE_LOG_SIZE")
   Log entries ............ $RATE_LOG_ENTRIES
 
   Results saved to: $RESULTS_FILE
-════════════════════════════════════════════════════════════════════════════════════════════
+============================================================================================
 EOF
 }
 
