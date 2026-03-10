@@ -15,18 +15,18 @@ The extension hooks into the executor pipeline to capture timing, buffer I/O, WA
 
 ## Features
 
-- **pt-query-digest compatibility** -- output format matches the MySQL slow query log so `pt-query-digest --type slowlog` works out of the box
-- **Three verbosity levels** -- from lightweight timing-only (`minimal`) to full buffer/WAL/JIT instrumentation (`full`)
-- **Plan quality indicators** -- `Full_scan`, `Filesort`, `Filesort_on_disk`, `Temp_table`, `Temp_table_on_disk` derived from the actual plan tree
-- **Rate limiting** -- per-session or per-query sampling with an always-log override for very slow queries
-- **Buffer, WAL, and I/O timing metrics** -- shared/local/temp block counts, read/write times, WAL records and bytes
-- **JIT metrics** -- function count, generation/optimization/inlining/emission times
-- **Planning time tracking** -- separate planner hook measures planning wall-clock time
-- **Memory context tracking** -- experimental per-query memory allocation measurement
-- **Utility statement logging** -- optional logging of DDL (Data Definition Language) and other utility statements
-- **Nested statement logging** -- optional logging of statements inside PL/pgSQL functions
-- **Parameter value logging** -- optional inclusion of bind parameter values
-- **EXPLAIN plan inclusion** -- optional EXPLAIN ANALYZE output embedded in the log entry
+- **[pt-query-digest compatibility](doc/pt-query-digest.md)** -- output format matches the MySQL slow query log so `pt-query-digest --type slowlog` works out of the box
+- **[Three verbosity levels](doc/output-format.md)** -- from lightweight timing-only (`minimal`) to full buffer/WAL/JIT instrumentation (`full`)
+- **[Plan quality indicators](doc/architecture.md#plan-tree-analysis)** -- `Full_scan`, `Filesort`, `Filesort_on_disk`, `Temp_table`, `Temp_table_on_disk` derived from the actual plan tree
+- **[Rate limiting](doc/configuration.md#rate-limiting)** -- per-session or per-query sampling with an always-log override for very slow queries
+- **[Buffer, WAL, and I/O timing metrics](doc/output-format.md#field-reference)** -- shared/local/temp block counts, read/write times, WAL records and bytes
+- **[JIT metrics](doc/output-format.md#field-reference)** -- function count, generation/optimization/inlining/emission times
+- **[Planning time tracking](doc/configuration.md#extended-tracking)** -- separate planner hook measures planning wall-clock time
+- **[Memory context tracking](doc/compatibility.md)** -- experimental per-query memory allocation measurement ([why experimental?](doc/compatibility.md))
+- **[Utility statement logging](doc/configuration.md#statement-filtering)** -- optional logging of DDL (Data Definition Language) and other utility statements
+- **[Nested statement logging](doc/configuration.md#statement-filtering)** -- optional logging of statements inside PL/pgSQL functions
+- **[Parameter value logging](doc/configuration.md#query-plan-and-parameters)** -- optional inclusion of bind parameter values
+- **[EXPLAIN plan inclusion](doc/configuration.md#query-plan-and-parameters)** -- optional EXPLAIN ANALYZE output embedded in the log entry
 
 ## Requirements
 
