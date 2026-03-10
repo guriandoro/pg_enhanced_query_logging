@@ -32,8 +32,10 @@
 
 #include "catalog/namespace.h"
 #include "commands/explain.h"
+#if PG_VERSION_NUM >= 180000
 #include "commands/explain_format.h"
 #include "commands/explain_state.h"
+#endif
 #include "common/file_perm.h"
 #include "common/pg_prng.h"
 #include "executor/executor.h"
@@ -67,10 +69,14 @@
 #include "utils/tuplesort.h"
 #include "utils/wait_event.h"
 
+#if PG_VERSION_NUM >= 180000
 PG_MODULE_MAGIC_EXT(
 	.name = "pg_enhanced_query_logging",
 	.version = "1.2"
 );
+#else
+PG_MODULE_MAGIC;
+#endif
 
 /* ---------- GUC variables ------------------------------------------------ */
 
