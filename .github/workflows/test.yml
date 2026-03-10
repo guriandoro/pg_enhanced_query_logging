@@ -54,12 +54,13 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo pg_dropcluster --stop ${{ matrix.pg_version }} main || true
-            sudo pg_createcluster ${{ matrix.pg_version }} test -- \
+            sudo pg_createcluster ${{ matrix.pg_version }} test -p 5432 -- \
               -A trust
             echo "shared_preload_libraries = 'pg_enhanced_query_logging'" | \
               sudo tee -a /etc/postgresql/${{ matrix.pg_version }}/test/postgresql.conf
             sudo pg_ctlcluster ${{ matrix.pg_version }} test start
             echo "PGHOST=/var/run/postgresql" >> "$GITHUB_ENV"
+            echo "PGPORT=5432" >> "$GITHUB_ENV"
           else
             PGDATA="$(pwd)/pgdata"
             initdb -D "$PGDATA" -A trust
