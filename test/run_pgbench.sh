@@ -829,18 +829,30 @@ pct_diff() {
 }
 
 print_comparison() {
-    local on_off_tps_diff on_off_lat_diff rate_off_tps_diff rate_off_lat_diff
-    on_off_tps_diff=$(pct_diff "$ON_TPS_EXCL" "$OFF_TPS_EXCL")
-    on_off_lat_diff=$(pct_diff "$ON_AVG_LATENCY" "$OFF_AVG_LATENCY")
-    rate_off_tps_diff=$(pct_diff "$RATE_TPS_EXCL" "$OFF_TPS_EXCL")
-    rate_off_lat_diff=$(pct_diff "$RATE_AVG_LATENCY" "$OFF_AVG_LATENCY")
+    # -- deltas vs "No logging" baseline (Phase 5)
+    local on_nolog_tps_diff on_nolog_lat_diff
+    local off_nolog_tps_diff off_nolog_lat_diff
+    local rate_nolog_tps_diff rate_nolog_lat_diff
+    local pglog_nolog_tps_diff pglog_nolog_lat_diff
+    local on_pglog_tps_diff on_pglog_lat_diff
+
+    on_nolog_tps_diff=$(pct_diff "$ON_TPS_EXCL" "$NOLOG_TPS_EXCL")
+    on_nolog_lat_diff=$(pct_diff "$ON_AVG_LATENCY" "$NOLOG_AVG_LATENCY")
+    off_nolog_tps_diff=$(pct_diff "$OFF_TPS_EXCL" "$NOLOG_TPS_EXCL")
+    off_nolog_lat_diff=$(pct_diff "$OFF_AVG_LATENCY" "$NOLOG_AVG_LATENCY")
+    rate_nolog_tps_diff=$(pct_diff "$RATE_TPS_EXCL" "$NOLOG_TPS_EXCL")
+    rate_nolog_lat_diff=$(pct_diff "$RATE_AVG_LATENCY" "$NOLOG_AVG_LATENCY")
+    pglog_nolog_tps_diff=$(pct_diff "$PGLOG_TPS_EXCL" "$NOLOG_TPS_EXCL")
+    pglog_nolog_lat_diff=$(pct_diff "$PGLOG_AVG_LATENCY" "$NOLOG_AVG_LATENCY")
+    on_pglog_tps_diff=$(pct_diff "$ON_TPS_EXCL" "$PGLOG_TPS_EXCL")
+    on_pglog_lat_diff=$(pct_diff "$ON_AVG_LATENCY" "$PGLOG_AVG_LATENCY")
 
     local C=15  # column width for data values
     local L=24  # label column width
 
     local hdr_fmt="  %-${L}s %${C}s %${C}s %${C}s %${C}s %${C}s\n"
     local row_fmt="  %-${L}s %${C}s %${C}s %${C}s %${C}s %${C}s\n"
-    local row3_fmt="  %-${L}s %${C}s %${C}s %${C}s\n"
+    local row5_fmt="  %-${L}s %${C}s %${C}s %${C}s %${C}s %${C}s\n"
 
     local total_w=$(( L + 2 + (C + 1) * 5 ))
     local sep
@@ -848,17 +860,39 @@ print_comparison() {
 
     cat <<EOF
 
-============================================================================================
-  A/B/C Comparison -- PEQL ON vs PEQL OFF vs PEQL ON (1% rate limit)
-============================================================================================
+========================================================================================================
+  5-Phase Comparison
+========================================================================================================
+
+  Phase 1: PEQL ON        -- full PEQL query logging
+  Phase 2: PEQL OFF       -- extension loaded but disabled
+  Phase 3: PEQL ON 1%     -- 1% query sampling
+  Phase 4: PG logging     -- native log_min_duration_statement = 0 (no PEQL)
+  Phase 5: No logging     -- zero logging baseline (no PEQL)
 
 EOF
-    printf "$hdr_fmt" "" "PEQL ON" "PEQL OFF" "PEQL ON 1%" "ON vs OFF" "1% vs OFF"
+
+    printf "$hdr_fmt" "-- TPS (excl. conn) --" "PEQL ON" "PEQL OFF" "PEQL 1%" "PG logging" "No logging"
     echo "$sep"
-    printf "$row_fmt" "TPS (excl. conn)" "$ON_TPS_EXCL" "$OFF_TPS_EXCL" "$RATE_TPS_EXCL" "$on_off_tps_diff" "$rate_off_tps_diff"
-    printf "$row_fmt" "Avg latency (ms)" "$ON_AVG_LATENCY" "$OFF_AVG_LATENCY" "$RATE_AVG_LATENCY" "$on_off_lat_diff" "$rate_off_lat_diff"
-    printf "$row3_fmt" "Latency stddev (ms)" "$ON_LATENCY_STDDEV" "$OFF_LATENCY_STDDEV" "$RATE_LATENCY_STDDEV"
-    printf "$row3_fmt" "Transactions" "$ON_TXNS" "$OFF_TXNS" "$RATE_TXNS"
+    printf "$row5_fmt" "Value" "$ON_TPS_EXCL" "$OFF_TPS_EXCL" "$RATE_TPS_EXCL" "$PGLOG_TPS_EXCL" "$NOLOG_TPS_EXCL"
+    printf "$row5_fmt" "vs No logging" "$on_nolog_tps_diff" "$off_nolog_tps_diff" "$rate_nolog_tps_diff" "$pglog_nolog_tps_diff" "--"
+    echo ""
+
+    printf "$hdr_fmt" "-- Avg latency (ms) --" "PEQL ON" "PEQL OFF" "PEQL 1%" "PG logging" "No logging"
+    echo "$sep"
+    printf "$row5_fmt" "Value" "$ON_AVG_LATENCY" "$OFF_AVG_LATENCY" "$RATE_AVG_LATENCY" "$PGLOG_AVG_LATENCY" "$NOLOG_AVG_LATENCY"
+    printf "$row5_fmt" "vs No logging" "$on_nolog_lat_diff" "$off_nolog_lat_diff" "$rate_nolog_lat_diff" "$pglog_nolog_lat_diff" "--"
+    echo ""
+
+    printf "$hdr_fmt" "-- Other metrics --" "PEQL ON" "PEQL OFF" "PEQL 1%" "PG logging" "No logging"
+    echo "$sep"
+    printf "$row5_fmt" "Latency stddev (ms)" "$ON_LATENCY_STDDEV" "$OFF_LATENCY_STDDEV" "$RATE_LATENCY_STDDEV" "$PGLOG_LATENCY_STDDEV" "$NOLOG_LATENCY_STDDEV"
+    printf "$row5_fmt" "Transactions" "$ON_TXNS" "$OFF_TXNS" "$RATE_TXNS" "$PGLOG_TXNS" "$NOLOG_TXNS"
+    echo ""
+
+    printf "  %-${L}s %${C}s %${C}s\n" "-- PEQL ON vs PG log --" "TPS" "Latency"
+    echo "$sep"
+    printf "  %-${L}s %${C}s %${C}s\n" "PEQL ON vs PG logging" "$on_pglog_tps_diff" "$on_pglog_lat_diff"
 
     cat <<EOF
 
@@ -874,8 +908,11 @@ EOF
   Log file size .......... $(format_bytes "$RATE_LOG_SIZE")
   Log entries ............ $RATE_LOG_ENTRIES
 
+  -- PG logging metrics --
+  PG log file size ....... $(format_bytes "$PGLOG_PG_LOG_SIZE")
+
   Results saved to: $RESULTS_FILE
-============================================================================================
+========================================================================================================
 EOF
 }
 
