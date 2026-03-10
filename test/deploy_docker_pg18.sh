@@ -216,13 +216,32 @@ if [ "$PMM_QAN" -eq 1 ]; then
     PRELOAD_LIBS="pg_enhanced_query_logging,pg_stat_statements"
 fi
 
-info "Configuring shared_preload_libraries and restarting PostgreSQL"
+info "Configuring shared_preload_libraries, tuning, and restarting PostgreSQL"
 docker exec "$CONTAINER_NAME" bash -c '
     PGCONF="$(psql -U postgres -tAc "SHOW config_file;")"
     echo "shared_preload_libraries = '"'"''"$PRELOAD_LIBS"''"'"'" >> "$PGCONF"
     echo "peql.log_min_duration = 0"   >> "$PGCONF"
     echo "peql.log_verbosity = '"'"'full'"'"'" >> "$PGCONF"
     echo "track_io_timing = on"        >> "$PGCONF"
+
+    # --- performance tuning (50 GB container) ---
+    echo "shared_buffers = '"'"'12GB'"'"'"              >> "$PGCONF"
+    echo "effective_cache_size = '"'"'36GB'"'"'"         >> "$PGCONF"
+    echo "work_mem = '"'"'128MB'"'"'"                   >> "$PGCONF"
+    echo "maintenance_work_mem = '"'"'2GB'"'"'"          >> "$PGCONF"
+    echo "wal_buffers = '"'"'64MB'"'"'"                 >> "$PGCONF"
+    echo "checkpoint_timeout = '"'"'30min'"'"'"          >> "$PGCONF"
+    echo "checkpoint_completion_target = 0.9"           >> "$PGCONF"
+    echo "max_wal_size = '"'"'10GB'"'"'"                >> "$PGCONF"
+    echo "min_wal_size = '"'"'1GB'"'"'"                 >> "$PGCONF"
+    echo "random_page_cost = 1.1"                      >> "$PGCONF"
+    echo "effective_io_concurrency = 200"               >> "$PGCONF"
+    echo "max_parallel_workers_per_gather = 4"          >> "$PGCONF"
+    echo "max_parallel_workers = 8"                     >> "$PGCONF"
+    echo "max_worker_processes = 16"                    >> "$PGCONF"
+    echo "max_connections = 200"                        >> "$PGCONF"
+    echo "bgwriter_lru_maxpages = 400"                  >> "$PGCONF"
+    echo "bgwriter_lru_multiplier = 4.0"                >> "$PGCONF"
 '
 
 docker restart "$CONTAINER_NAME"
