@@ -320,7 +320,11 @@ static PlannedStmt *peql_planner(Query *parse, const char *query_string,
 static void peql_ExecutorStart(QueryDesc *queryDesc, int eflags);
 static void peql_ExecutorRun(QueryDesc *queryDesc,
 							 ScanDirection direction,
-							 uint64 count);
+							 uint64 count
+#if PG_VERSION_NUM < 180000
+							 , bool execute_once
+#endif
+							 );
 static void peql_ExecutorFinish(QueryDesc *queryDesc);
 static void peql_ExecutorEnd(QueryDesc *queryDesc);
 static void peql_ProcessUtility(PlannedStmt *pstmt,
@@ -1180,15 +1184,27 @@ peql_ExecutorStart(QueryDesc *queryDesc, int eflags)
  * ──────────────────────────────────────────────────────────────────────────
  */
 static void
-peql_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count)
+peql_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count
+#if PG_VERSION_NUM < 180000
+				, bool execute_once
+#endif
+				)
 {
 	nesting_level++;
 	PG_TRY();
 	{
 		if (prev_ExecutorRun)
+#if PG_VERSION_NUM >= 180000
 			prev_ExecutorRun(queryDesc, direction, count);
+#else
+			prev_ExecutorRun(queryDesc, direction, count, execute_once);
+#endif
 		else
+#if PG_VERSION_NUM >= 180000
 			standard_ExecutorRun(queryDesc, direction, count);
+#else
+			standard_ExecutorRun(queryDesc, direction, count, execute_once);
+#endif
 	}
 	PG_FINALLY();
 	{
