@@ -91,6 +91,42 @@ CREATE EXTENSION pg_enhanced_query_logging;
 
 > **Note:** The extension's logging hooks are active for all databases as soon as the module is loaded via `shared_preload_libraries`. The `CREATE EXTENSION` step only installs the SQL-callable helper functions (`pg_enhanced_query_logging_reset()` and `pg_enhanced_query_logging_stats()`).
 
+## Quick Environment Setup (Docker)
+
+The `test/` directory includes scripts to spin up a fully configured Docker environment and run benchmarks with no manual installation required. This is the fastest way to try the extension.
+
+**Prerequisites:** Docker must be installed and running.
+
+```bash
+# 1. Build and launch a Rocky Linux 9 + PostgreSQL 18 container
+#    with the extension compiled, installed, and preloaded.
+./test/deploy_docker_pg18_rhel.sh
+
+# 2. Run a pgbench A/B/C benchmark (PEQL ON / OFF / 1% sampling).
+#    Defaults to a 600s run; override with PEQL_BENCH_DURATION.
+PEQL_BENCH_DURATION=120 ./test/run_pgbench.sh
+```
+
+The deploy script also starts a PMM server and client so you can monitor PostgreSQL in real time. Once it finishes, it prints connection details:
+
+```
+Connect:      PGPASSWORD=peqltest psql -h localhost -p 15433 -U postgres
+PMM UI:       https://localhost:8444  (admin / admin)
+Teardown:     ./test/deploy_docker_pg18_rhel.sh teardown
+```
+
+To tear down all containers, the network, and the images when you are done:
+
+```bash
+# Remove the PostgreSQL, PMM client, and PMM server containers + network
+./test/deploy_docker_pg18_rhel.sh teardown
+
+# Optionally remove the built images to free disk space
+docker rmi peql-pg18-rhel percona/pmm-server:3 percona/pmm-client:3
+```
+
+Both scripts accept environment variables for customization. Run `./test/run_pgbench.sh --help` or see the script headers for the full list (port, password, clients, scale factor, workload mode, etc.).
+
 ## Quick Start
 
 Add these lines to `postgresql.conf` and restart:
