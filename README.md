@@ -73,7 +73,7 @@ make maintainer-clean USE_PGXS=1
 
 This installs:
 - `pg_enhanced_query_logging.so` (or `.dylib`) into `$(pg_config --pkglibdir)`
-- `pg_enhanced_query_logging.control` and `pg_enhanced_query_logging--1.0.sql` into `$(pg_config --sharedir)/extension/`
+- `pg_enhanced_query_logging.control` and the SQL files (`pg_enhanced_query_logging--1.0.sql`, `pg_enhanced_query_logging--1.1.sql`, `pg_enhanced_query_logging--1.2.sql`, and upgrade scripts) into `$(pg_config --sharedir)/extension/`
 
 ### Loading the Extension
 
