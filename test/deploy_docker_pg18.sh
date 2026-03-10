@@ -16,6 +16,9 @@
 #   PEQL_PMM_PASSWORD   PMM admin password                (default: admin)
 #   PEQL_PMM_QAN        Enable Query Analytics via pg_stat_statements
 #                       (set to 1/true/yes to enable; disabled by default)
+#   PEQL_SKIP_PMM_CLIENT
+#                       Skip PMM client setup entirely
+#                       (set to 1/true/yes to skip; not skipped by default)
 #
 set -euo pipefail
 
@@ -38,6 +41,11 @@ DOCKER_NETWORK="peql-pmm-net"
 case "${PEQL_PMM_QAN:-}" in
     1|true|yes) PMM_QAN=1 ;;
     *)          PMM_QAN=0 ;;
+esac
+
+case "${PEQL_SKIP_PMM_CLIENT:-}" in
+    1|true|yes) SKIP_PMM_CLIENT=1 ;;
+    *)          SKIP_PMM_CLIENT=0 ;;
 esac
 
 # --- helpers ----------------------------------------------------------------
@@ -285,60 +293,64 @@ docker exec "$CONTAINER_NAME" bash -c '
 
 # --- PMM client setup -------------------------------------------------------
 
-info "Creating pmm user in PostgreSQL"
-docker exec "$CONTAINER_NAME" psql -U postgres -c \
-    "CREATE USER pmm WITH SUPERUSER ENCRYPTED PASSWORD 'pmm';"
-
-if [ "$PMM_QAN" -eq 1 ]; then
-    info "Creating pg_stat_statements extension (QAN enabled)"
-    docker exec "$CONTAINER_NAME" psql -U postgres -c \
-        "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
-fi
-
-if docker ps -a --format '{{.Names}}' | grep -qx "$PMM_CLIENT_CONTAINER"; then
-    info "Removing existing PMM client container $PMM_CLIENT_CONTAINER"
-    docker rm -f "$PMM_CLIENT_CONTAINER" >/dev/null
-fi
-
-info "Pulling $PMM_CLIENT_IMAGE (if not cached)"
-docker pull "$PMM_CLIENT_IMAGE"
-
-info "Starting PMM client container ($PMM_CLIENT_CONTAINER)"
-docker run -d \
-    --name "$PMM_CLIENT_CONTAINER" \
-    --network "$DOCKER_NETWORK" \
-    -e PMM_AGENT_SERVER_ADDRESS="${PMM_CONTAINER}:8443" \
-    -e PMM_AGENT_SERVER_USERNAME=admin \
-    -e PMM_AGENT_SERVER_PASSWORD="${PMM_PASSWORD}" \
-    -e PMM_AGENT_SERVER_INSECURE_TLS=1 \
-    -e PMM_AGENT_SETUP=1 \
-    -e PMM_AGENT_CONFIG_FILE=config/pmm-agent.yaml \
-    -e PMM_AGENT_PRERUN_SCRIPT="pmm-admin status --wait=10s" \
-    "$PMM_CLIENT_IMAGE" \
-    >/dev/null
-
-info "Waiting for PMM client to register"
-local_retries=30
-while ! docker exec "$PMM_CLIENT_CONTAINER" pmm-admin status >/dev/null 2>&1; do
-    local_retries=$((local_retries - 1))
-    if [ "$local_retries" -le 0 ]; then
-        fail "PMM client did not become ready in time"
-    fi
-    sleep 2
-done
-ok "PMM client is ready"
-
-PMM_ADD_FLAGS="--username=pmm --password=pmm --host=$CONTAINER_NAME --port=5432"
-if [ "$PMM_QAN" -eq 1 ]; then
-    PMM_ADD_FLAGS="$PMM_ADD_FLAGS --query-source=pgstatstatements"
+if [ "$SKIP_PMM_CLIENT" -eq 1 ]; then
+    info "Skipping PMM client setup (PEQL_SKIP_PMM_CLIENT is set)"
 else
-    PMM_ADD_FLAGS="$PMM_ADD_FLAGS --query-source=none"
-fi
+    info "Creating pmm user in PostgreSQL"
+    docker exec "$CONTAINER_NAME" psql -U postgres -c \
+        "CREATE USER pmm WITH SUPERUSER ENCRYPTED PASSWORD 'pmm';"
 
-info "Adding PostgreSQL service to PMM"
-docker exec "$PMM_CLIENT_CONTAINER" pmm-admin add postgresql $PMM_ADD_FLAGS ||
-    fail "Failed to add PostgreSQL service to PMM"
-ok "PostgreSQL service added to PMM"
+    if [ "$PMM_QAN" -eq 1 ]; then
+        info "Creating pg_stat_statements extension (QAN enabled)"
+        docker exec "$CONTAINER_NAME" psql -U postgres -c \
+            "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+    fi
+
+    if docker ps -a --format '{{.Names}}' | grep -qx "$PMM_CLIENT_CONTAINER"; then
+        info "Removing existing PMM client container $PMM_CLIENT_CONTAINER"
+        docker rm -f "$PMM_CLIENT_CONTAINER" >/dev/null
+    fi
+
+    info "Pulling $PMM_CLIENT_IMAGE (if not cached)"
+    docker pull "$PMM_CLIENT_IMAGE"
+
+    info "Starting PMM client container ($PMM_CLIENT_CONTAINER)"
+    docker run -d \
+        --name "$PMM_CLIENT_CONTAINER" \
+        --network "$DOCKER_NETWORK" \
+        -e PMM_AGENT_SERVER_ADDRESS="${PMM_CONTAINER}:8443" \
+        -e PMM_AGENT_SERVER_USERNAME=admin \
+        -e PMM_AGENT_SERVER_PASSWORD="${PMM_PASSWORD}" \
+        -e PMM_AGENT_SERVER_INSECURE_TLS=1 \
+        -e PMM_AGENT_SETUP=1 \
+        -e PMM_AGENT_CONFIG_FILE=config/pmm-agent.yaml \
+        -e PMM_AGENT_PRERUN_SCRIPT="pmm-admin status --wait=10s" \
+        "$PMM_CLIENT_IMAGE" \
+        >/dev/null
+
+    info "Waiting for PMM client to register"
+    local_retries=30
+    while ! docker exec "$PMM_CLIENT_CONTAINER" pmm-admin status >/dev/null 2>&1; do
+        local_retries=$((local_retries - 1))
+        if [ "$local_retries" -le 0 ]; then
+            fail "PMM client did not become ready in time"
+        fi
+        sleep 2
+    done
+    ok "PMM client is ready"
+
+    PMM_ADD_FLAGS="--username=pmm --password=pmm --host=$CONTAINER_NAME --port=5432"
+    if [ "$PMM_QAN" -eq 1 ]; then
+        PMM_ADD_FLAGS="$PMM_ADD_FLAGS --query-source=pgstatstatements"
+    else
+        PMM_ADD_FLAGS="$PMM_ADD_FLAGS --query-source=none"
+    fi
+
+    info "Adding PostgreSQL service to PMM"
+    docker exec "$PMM_CLIENT_CONTAINER" pmm-admin add postgresql $PMM_ADD_FLAGS ||
+        fail "Failed to add PostgreSQL service to PMM"
+    ok "PostgreSQL service added to PMM"
+fi
 
 # --- summary ----------------------------------------------------------------
 
@@ -347,7 +359,9 @@ info "Container $CONTAINER_NAME is running PostgreSQL 18 with pg_enhanced_query_
 echo ""
 echo "  Connect:      PGPASSWORD=$PG_PASSWORD psql -h localhost -p $PG_PORT -U postgres"
 echo "  PMM UI:       https://localhost:$PMM_PORT  (admin / $PMM_PASSWORD)"
-echo "  PMM client:   docker exec $PMM_CLIENT_CONTAINER pmm-admin status"
+if [ "$SKIP_PMM_CLIENT" -eq 0 ]; then
+    echo "  PMM client:   docker exec $PMM_CLIENT_CONTAINER pmm-admin status"
+fi
 echo "  Teardown:     $0 teardown"
 echo ""
 echo "  View log:     docker exec $CONTAINER_NAME bash -c 'cat \$(psql -U postgres -tAc \"SHOW data_directory;\")/\$(psql -U postgres -tAc \"SHOW log_directory;\")/peql-slow.log'"
