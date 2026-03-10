@@ -69,11 +69,8 @@ jobs:
             pg_ctl -D "$PGDATA" -l "$PGDATA/server.log" start
           fi
 
-      - name: Run pg_regress tests
+      - name: Run tests (pg_regress + TAP)
         run: make installcheck USE_PGXS=1
-
-      - name: Run TAP tests
-        run: make prove_installcheck USE_PGXS=1
 
       - name: Upload test results on failure
         if: failure()
