@@ -548,6 +548,202 @@ EOF
     eval "${prefix}_LOG_ENTRIES='$log_entries'"
 }
 
+# -- run_benchmark_no_peql: run pgbench with PEQL fully unloaded ------
+#
+# Removes pg_enhanced_query_logging from shared_preload_libraries,
+# applies the given SQL settings (e.g. native PG logging GUCs),
+# restarts PostgreSQL, runs pgbench, and collects results.
+#
+# Arguments:
+#   $1 -- run label (e.g. "PG logging (no PEQL)")
+#   $2 -- variable prefix for storing results (e.g. "PGLOG", "NOLOG")
+#   $3 -- SQL statements to run via ALTER SYSTEM before restart
+
+run_benchmark_no_peql() {
+    local label="$1" prefix="$2"
+    local setup_sql="${3:-}"
+
+    echo ""
+    info "================================================================"
+    info "  Phase: $label (PEQL unloaded)"
+    info "================================================================"
+
+    # -- remove PEQL from shared_preload_libraries
+    info "Removing pg_enhanced_query_logging from shared_preload_libraries"
+    docker exec "$CONTAINER" bash -c '
+        PGCONF="$(psql -U postgres -tAc "SHOW config_file;")"
+        sed -i "s/pg_enhanced_query_logging,\?//g; s/,\+/,/g; s/,'/'/g; s/='\'',/='\''/g" "$PGCONF"
+    '
+
+    # -- disable PEQL GUCs so they do not cause errors after unload
+    psql_cmd -c "ALTER SYSTEM RESET ALL;" >/dev/null 2>&1 || true
+
+    # -- apply the requested native PG logging settings
+    if [[ -n "$setup_sql" ]]; then
+        local -a psql_args=()
+        local stmt
+        while IFS= read -r stmt; do
+            stmt="${stmt#"${stmt%%[![:space:]]*}"}"
+            stmt="${stmt%"${stmt##*[![:space:]]}"}"
+            [[ -n "$stmt" ]] && psql_args+=(-c "$stmt;")
+        done < <(tr ';' '\n' <<< "$setup_sql")
+        [[ ${#psql_args[@]} -gt 0 ]] && psql_cmd "${psql_args[@]}"
+    fi
+
+    # -- restart PostgreSQL (required for shared_preload_libraries change)
+    restart_pg
+
+    # -- verify settings
+    local actual_spl actual_log_min_dur actual_log_stmt
+    actual_spl=$(psql_cmd -c "SHOW shared_preload_libraries;")
+    actual_log_min_dur=$(psql_cmd -c "SHOW log_min_duration_statement;" 2>/dev/null || echo "n/a")
+    actual_log_stmt=$(psql_cmd -c "SHOW log_statement;" 2>/dev/null || echo "n/a")
+
+    ok "shared_preload_libraries = $actual_spl"
+    ok "log_min_duration_statement = $actual_log_min_dur"
+    ok "log_statement = $actual_log_stmt"
+
+    # -- print configuration for this phase
+    {
+        cat <<EOF
+
+========================================================================
+  pgbench benchmark -- $label
+========================================================================
+
+  PostgreSQL .............. $PG_VERSION ($PG_HOST:$PG_PORT)
+  Container .............. ${CONTAINER:-"(direct connection)"}
+
+  Workload mode .......... $MODE
+  Clients ................ $CLIENTS
+  Threads ................ $THREADS
+  Duration ............... ${DURATION}s
+  Scale factor ........... $SCALE
+  Protocol ............... $PROTOCOL
+  Rate limit ............. $([ "$RATE" -gt 0 ] && echo "${RATE} TPS" || echo "unlimited")
+
+  shared_preload_libraries  $actual_spl
+  log_min_duration_statement  $actual_log_min_dur
+  log_statement .......... $actual_log_stmt
+
+------------------------------------------------------------------------
+EOF
+    } | tee -a "$RESULTS_FILE"
+
+    # -- force checkpoint and drop OS page cache
+    info "Running CHECKPOINT"
+    psql_cmd -c "CHECKPOINT;" >/dev/null
+    if [[ -n "$CONTAINER" ]]; then
+        info "Syncing and dropping OS page cache inside container"
+        docker exec "$CONTAINER" bash -c 'sync && echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null \
+            && ok "Page cache cleared" \
+            || warn "Could not drop page cache (non-fatal, may lack privileges)"
+    fi
+
+    # -- truncate the PG log so we measure only this phase
+    if [[ -n "$CONTAINER" ]]; then
+        docker exec "$CONTAINER" bash -c '
+            DATA_DIR=$(psql -U postgres -tAc "SHOW data_directory;")
+            LOG_DIR=$(psql -U postgres -tAc "SHOW log_directory;")
+            for f in "${DATA_DIR}/${LOG_DIR}"/postgresql*.log; do
+                [ -f "$f" ] && : > "$f"
+            done
+        ' 2>/dev/null || true
+    fi
+
+    # -- PMM annotation
+    pmm_annotate "pgbench START -- $label | ${MODE} ${CLIENTS}c ${DURATION}s"
+
+    # -- run pgbench
+    info "Running pgbench ($MODE, ${CLIENTS}c x ${THREADS}j x ${DURATION}s, protocol=$PROTOCOL)"
+
+    local output_file
+    output_file=$(mktemp /tmp/peql_bench_output.XXXXXX)
+    TMPFILES+=("$output_file")
+
+    set +e
+    pgbench_cmd "${PGBENCH_ARGS[@]}" 2>&1 | tee "$output_file"
+    local pgbench_exit=$?
+    set -e
+
+    if [[ "$pgbench_exit" -ne 0 ]]; then
+        warn "pgbench exited with code $pgbench_exit"
+    fi
+
+    pmm_annotate "pgbench END -- $label | exit=$pgbench_exit"
+
+    echo "" >> "$RESULTS_FILE"
+    echo "-- pgbench output ($label) --------------------------------------" >> "$RESULTS_FILE"
+    cat "$output_file" >> "$RESULTS_FILE"
+
+    # -- collect PG log metrics (size of the native PostgreSQL log files)
+    echo ""
+    info "Collecting metrics"
+
+    local pg_log_size="(unknown)"
+    if [[ -n "$CONTAINER" ]]; then
+        pg_log_size=$(docker exec "$CONTAINER" bash -c '
+            DATA_DIR=$(psql -U postgres -tAc "SHOW data_directory;")
+            LOG_DIR=$(psql -U postgres -tAc "SHOW log_directory;")
+            total=0
+            for f in "${DATA_DIR}/${LOG_DIR}"/postgresql*.log; do
+                if [ -f "$f" ]; then
+                    sz=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null || echo 0)
+                    total=$((total + sz))
+                fi
+            done
+            echo "$total"
+        ' 2>/dev/null || echo "(unknown)")
+    fi
+
+    # -- extract TPS / latency from pgbench output
+    local tps_incl tps_excl avg_latency latency_stddev txns_processed
+    tps_incl=$(sed -n 's/.*tps = \([0-9.]*\).*including.*/\1/p' "$output_file" | head -1)
+    tps_excl=$(sed -n 's/.*tps = \([0-9.]*\).*excluding.*/\1/p' "$output_file" | head -1)
+    if [[ -z "$tps_excl" ]]; then
+        tps_excl=$(sed -n 's/.*tps = \([0-9.]*\).*(without initial connection time).*/\1/p' "$output_file" | head -1)
+        [[ -z "$tps_incl" && -n "$tps_excl" ]] && tps_incl="$tps_excl"
+    fi
+    avg_latency=$(extract "latency average" "$output_file" | sed -n 's/.*latency average = \([0-9.]*\).*/\1/p')
+    latency_stddev=$(extract "latency stddev" "$output_file" | sed -n 's/.*latency stddev = \([0-9.]*\).*/\1/p')
+    txns_processed=$(extract "number of transactions actually processed" "$output_file" | sed -n 's/.*processed: \([0-9]*\).*/\1/p')
+
+    : "${tps_incl:=n/a}"
+    : "${tps_excl:=n/a}"
+    : "${avg_latency:=n/a}"
+    : "${latency_stddev:=n/a}"
+    : "${txns_processed:=n/a}"
+
+    # -- print phase summary
+    {
+        cat <<EOF
+
+========================================================================
+  Results -- $label
+========================================================================
+
+  TPS (incl. conn) ....... $tps_incl
+  TPS (excl. conn) ....... $tps_excl
+  Avg latency ............ ${avg_latency} ms
+  Latency stddev ......... ${latency_stddev} ms
+  Transactions ........... $txns_processed
+
+  -- PG log metrics --
+  PG log file size ....... $(format_bytes "$pg_log_size")
+
+========================================================================
+EOF
+    } | tee -a "$RESULTS_FILE"
+
+    # -- store results in global variables for comparison
+    eval "${prefix}_TPS_INCL='$tps_incl'"
+    eval "${prefix}_TPS_EXCL='$tps_excl'"
+    eval "${prefix}_AVG_LATENCY='$avg_latency'"
+    eval "${prefix}_LATENCY_STDDEV='$latency_stddev'"
+    eval "${prefix}_TXNS='$txns_processed'"
+    eval "${prefix}_PG_LOG_SIZE='$pg_log_size'"
+}
+
 # -- temp file cleanup -------------------------------------------------
 
 TMPFILES=()
