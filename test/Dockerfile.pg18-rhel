@@ -28,7 +28,9 @@ RUN dnf -y install \
         openssl-devel \
         krb5-devel \
         libxml2-devel \
-        lz4-devel && \
+        lz4-devel \
+        curl \
+        perl && \
     dnf clean all
 
 ENV PATH="/usr/pgsql-${PG_MAJOR}/bin:${PATH}" \
@@ -41,6 +43,10 @@ RUN cd /tmp/pg_enhanced_query_logging && \
     make USE_PGXS=1 -j"$(nproc)" && \
     make install USE_PGXS=1 && \
     rm -rf /tmp/pg_enhanced_query_logging
+
+RUN curl -sSL -o /usr/local/bin/pt-query-digest https://percona.com/get/pt-query-digest && \
+    chmod +x /usr/local/bin/pt-query-digest && \
+    chown root:root /usr/local/bin/pt-query-digest
 
 RUN su - postgres -c " \
     /usr/pgsql-${PG_MAJOR}/bin/initdb --pgdata=${PGDATA} && \

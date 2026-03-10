@@ -190,6 +190,19 @@ docker exec "$CONTAINER_NAME" bash -c '
 '
 ok "Build tools installed"
 
+# --- install pt-query-digest ------------------------------------------------
+
+info "Installing pt-query-digest"
+docker exec "$CONTAINER_NAME" bash -c '
+    if ! command -v pt-query-digest >/dev/null 2>&1; then
+        apt-get install -y -qq --no-install-recommends curl perl >/dev/null 2>&1
+        curl -sSL -o /usr/local/bin/pt-query-digest https://percona.com/get/pt-query-digest
+        chmod +x /usr/local/bin/pt-query-digest
+        chown root:root /usr/local/bin/pt-query-digest
+    fi
+'
+ok "pt-query-digest installed"
+
 # --- copy extension source into the container --------------------------------
 
 info "Copying extension source into the container"
@@ -338,4 +351,5 @@ echo "  PMM client:   docker exec $PMM_CLIENT_CONTAINER pmm-admin status"
 echo "  Teardown:     $0 teardown"
 echo ""
 echo "  View log:     docker exec $CONTAINER_NAME bash -c 'cat \$(psql -U postgres -tAc \"SHOW data_directory;\")/\$(psql -U postgres -tAc \"SHOW log_directory;\")/peql-slow.log'"
+echo "  Digest:       docker exec $CONTAINER_NAME bash -c 'pt-query-digest --type slowlog \$(psql -U postgres -tAc \"SHOW data_directory;\")/\$(psql -U postgres -tAc \"SHOW log_directory;\")/peql-slow.log'"
 echo ""
