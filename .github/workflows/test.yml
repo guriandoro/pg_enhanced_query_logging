@@ -50,6 +50,23 @@ jobs:
           make USE_PGXS=1
           sudo make install USE_PGXS=1
 
+      - name: Start PostgreSQL for installcheck
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo pg_dropcluster --stop ${{ matrix.pg_version }} main || true
+            sudo pg_createcluster ${{ matrix.pg_version }} test -- \
+              -A trust
+            echo "shared_preload_libraries = 'pg_enhanced_query_logging'" | \
+              sudo tee -a /etc/postgresql/${{ matrix.pg_version }}/test/postgresql.conf
+            sudo pg_ctlcluster ${{ matrix.pg_version }} test start
+            export PGHOST=/var/run/postgresql
+          else
+            PGDATA="$(pwd)/pgdata"
+            initdb -D "$PGDATA" -A trust
+            echo "shared_preload_libraries = 'pg_enhanced_query_logging'" >> "$PGDATA/postgresql.conf"
+            pg_ctl -D "$PGDATA" -l "$PGDATA/server.log" start
+          fi
+
       - name: Run pg_regress tests
         run: make installcheck USE_PGXS=1
 
