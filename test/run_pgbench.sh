@@ -5,11 +5,16 @@
 # pg_enhanced_query_logging under configurable concurrency and workload
 # scenarios.
 #
-# The script performs an A/B/C comparison by running pgbench three times:
+# The script performs a five-phase comparison:
 #   Phase 1 -- PEQL ON:       peql.enabled = on  (measures extension overhead)
-#   Phase 2 -- PEQL OFF:      peql.enabled = off (baseline without the extension)
+#   Phase 2 -- PEQL OFF:      peql.enabled = off (extension loaded but disabled)
 #   Phase 3 -- PEQL ON (1%):  peql.enabled = on, peql.rate_limit = 100
 #                             (measures overhead with 1% query sampling)
+#   Phase 4 -- PG logging:    PEQL removed from shared_preload_libraries,
+#                             native log_min_duration_statement = 0
+#                             (measures native PostgreSQL logging overhead)
+#   Phase 5 -- No logging:    PEQL removed, no query logging at all
+#                             (true baseline with zero logging overhead)
 # A comparison summary with deltas is printed at the end.
 #
 # Usage:

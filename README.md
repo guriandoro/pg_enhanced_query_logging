@@ -102,7 +102,8 @@ The `test/` directory includes scripts to spin up a fully configured Docker envi
 #    with the extension compiled, installed, and preloaded.
 ./test/deploy_docker_pg18_rhel.sh
 
-# 2. Run a pgbench A/B/C benchmark (PEQL ON / OFF / 1% sampling).
+# 2. Run a pgbench 5-phase benchmark (PEQL ON / OFF / 1% sampling /
+#    native PG logging / no logging).
 #    Defaults to a 600s run; override with PEQL_BENCH_DURATION.
 PEQL_BENCH_DURATION=120 ./test/run_pgbench.sh
 ```
