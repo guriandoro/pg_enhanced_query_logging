@@ -166,9 +166,9 @@ pgbench_cmd() {
 
 restart_pg() {
     if [[ -z "$CONTAINER" ]]; then
-        fail "Cannot restart PostgreSQL: no container detected (phases 4-5 require Docker)"
+        fail "Cannot restart PostgreSQL: no container detected (all phases require Docker)"
     fi
-    info "Restarting PostgreSQL inside container $CONTAINER"
+    info "Restarting container $CONTAINER"
     docker restart "$CONTAINER"
 
     # First wait for PG to accept connections inside the container (no port-forward dependency)
