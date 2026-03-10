@@ -783,6 +783,36 @@ run_benchmark_no_peql "No logging (no PEQL)" "NOLOG" \
      ALTER SYSTEM SET log_statement = 'none';
      ALTER SYSTEM SET log_duration = off"
 
+# -- restore PEQL in shared_preload_libraries --------------------------
+
+restore_peql() {
+    if [[ -z "$CONTAINER" ]]; then
+        return
+    fi
+    info "Restoring pg_enhanced_query_logging in shared_preload_libraries"
+
+    docker exec "$CONTAINER" bash -c '
+        PGCONF="$(psql -U postgres -tAc "SHOW config_file;")"
+        CUR=$(grep "^shared_preload_libraries" "$PGCONF" | tail -1)
+        if ! echo "$CUR" | grep -q "pg_enhanced_query_logging"; then
+            if echo "$CUR" | grep -q "=.*'\'''\''"; then
+                sed -i "s/shared_preload_libraries = '\'''\''$/shared_preload_libraries = '\''pg_enhanced_query_logging'\''/" "$PGCONF"
+            elif echo "$CUR" | grep -q "= '\''"; then
+                sed -i "s/shared_preload_libraries = '\''/shared_preload_libraries = '\''pg_enhanced_query_logging,/" "$PGCONF"
+            else
+                echo "shared_preload_libraries = '\''pg_enhanced_query_logging'\''" >> "$PGCONF"
+            fi
+        fi
+    '
+
+    psql_cmd -c "ALTER SYSTEM RESET ALL;" >/dev/null 2>&1 || true
+
+    restart_pg
+    ok "PEQL restored in shared_preload_libraries"
+}
+
+restore_peql
+
 # -- comparison summary ------------------------------------------------
 
 pct_diff() {
