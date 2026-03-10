@@ -170,11 +170,24 @@ restart_pg() {
     fi
     info "Restarting PostgreSQL inside container $CONTAINER"
     docker restart "$CONTAINER"
-    local retries=30
+
+    # First wait for PG to accept connections inside the container (no port-forward dependency)
+    local retries=45
+    while ! docker exec "$CONTAINER" pg_isready -U postgres >/dev/null 2>&1; do
+        retries=$((retries - 1))
+        if [[ "$retries" -le 0 ]]; then
+            docker logs --tail 30 "$CONTAINER" >&2 || true
+            fail "PostgreSQL did not become ready after restart (pg_isready)"
+        fi
+        sleep 1
+    done
+
+    # Then confirm the host-mapped port is reachable
+    retries=15
     while ! psql_cmd -c "SELECT 1;" >/dev/null 2>&1; do
         retries=$((retries - 1))
         if [[ "$retries" -le 0 ]]; then
-            fail "PostgreSQL did not become ready after restart"
+            fail "PostgreSQL is running but host port $PG_PORT is not reachable"
         fi
         sleep 1
     done
