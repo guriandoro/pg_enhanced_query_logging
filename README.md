@@ -1,5 +1,7 @@
 # pg_enhanced_query_logging - PEQL
 
+[![CI](https://github.com/guriandoro/pg_enhanced_query_logging/actions/workflows/test.yml/badge.svg)](https://github.com/guriandoro/pg_enhanced_query_logging/actions/workflows/test.yml)
+
 <p align="center">
   <img src="doc/images/peql-logo.png" alt="pg_enhanced_query_logging logo" width="50%">
 </p>
