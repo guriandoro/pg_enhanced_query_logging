@@ -49,6 +49,25 @@ RUN su - postgres -c " \
     echo \"peql.log_verbosity = 'full'\" >> ${PGDATA}/postgresql.conf && \
     echo \"track_io_timing = on\"        >> ${PGDATA}/postgresql.conf && \
     echo \"listen_addresses = '*'\"      >> ${PGDATA}/postgresql.conf && \
+    \
+    echo \"shared_buffers = '12GB'\"              >> ${PGDATA}/postgresql.conf && \
+    echo \"effective_cache_size = '36GB'\"         >> ${PGDATA}/postgresql.conf && \
+    echo \"work_mem = '128MB'\"                   >> ${PGDATA}/postgresql.conf && \
+    echo \"maintenance_work_mem = '2GB'\"          >> ${PGDATA}/postgresql.conf && \
+    echo \"wal_buffers = '64MB'\"                 >> ${PGDATA}/postgresql.conf && \
+    echo \"checkpoint_timeout = '30min'\"          >> ${PGDATA}/postgresql.conf && \
+    echo \"checkpoint_completion_target = 0.9\"   >> ${PGDATA}/postgresql.conf && \
+    echo \"max_wal_size = '10GB'\"                >> ${PGDATA}/postgresql.conf && \
+    echo \"min_wal_size = '1GB'\"                 >> ${PGDATA}/postgresql.conf && \
+    echo \"random_page_cost = 1.1\"               >> ${PGDATA}/postgresql.conf && \
+    echo \"effective_io_concurrency = 200\"        >> ${PGDATA}/postgresql.conf && \
+    echo \"max_parallel_workers_per_gather = 4\"  >> ${PGDATA}/postgresql.conf && \
+    echo \"max_parallel_workers = 8\"             >> ${PGDATA}/postgresql.conf && \
+    echo \"max_worker_processes = 16\"            >> ${PGDATA}/postgresql.conf && \
+    echo \"max_connections = 200\"                >> ${PGDATA}/postgresql.conf && \
+    echo \"bgwriter_lru_maxpages = 400\"          >> ${PGDATA}/postgresql.conf && \
+    echo \"bgwriter_lru_multiplier = 4.0\"        >> ${PGDATA}/postgresql.conf && \
+    \
     echo 'host all all 0.0.0.0/0 md5'   >> ${PGDATA}/pg_hba.conf && \
     echo 'host all all ::/0      md5'   >> ${PGDATA}/pg_hba.conf \
 "
