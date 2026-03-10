@@ -386,7 +386,10 @@ run_benchmark() {
         done < <(tr ';' '\n' <<< "$extra_sql")
         [[ ${#psql_args[@]} -gt 0 ]] && psql_cmd "${psql_args[@]}"
     fi
-    psql_cmd -c "SELECT pg_reload_conf();" >/dev/null
+    # -- restart PostgreSQL so every phase starts from identical cold state
+    # (ALTER SYSTEM writes persist in postgresql.auto.conf, so the new
+    # settings are picked up automatically on startup)
+    restart_pg
 
     local actual_enabled actual_verbosity actual_min_duration actual_rate_limit actual_rate_limit_type
     actual_enabled=$(psql_cmd -c "SHOW peql.enabled;")
@@ -435,9 +438,8 @@ run_benchmark() {
 EOF
     } | tee -a "$RESULTS_FILE"
 
-    # -- force checkpoint and drop OS page cache to avoid background I/O
-    info "Running CHECKPOINT"
-    psql_cmd -c "CHECKPOINT;" >/dev/null
+    # -- drop OS page cache (restart already cleared shared_buffers and
+    # flushed dirty pages, but the kernel may still cache data files)
     if [[ -n "$CONTAINER" ]]; then
         info "Syncing and dropping OS page cache inside container"
         docker exec "$CONTAINER" bash -c 'sync && echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null \
@@ -643,9 +645,8 @@ run_benchmark_no_peql() {
 EOF
     } | tee -a "$RESULTS_FILE"
 
-    # -- force checkpoint and drop OS page cache
-    info "Running CHECKPOINT"
-    psql_cmd -c "CHECKPOINT;" >/dev/null
+    # -- drop OS page cache (restart already cleared shared_buffers and
+    # flushed dirty pages, but the kernel may still cache data files)
     if [[ -n "$CONTAINER" ]]; then
         info "Syncing and dropping OS page cache inside container"
         docker exec "$CONTAINER" bash -c 'sync && echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null \
