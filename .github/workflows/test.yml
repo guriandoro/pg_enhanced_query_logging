@@ -59,6 +59,7 @@ jobs:
             echo "shared_preload_libraries = 'pg_enhanced_query_logging'" | \
               sudo tee -a /etc/postgresql/${{ matrix.pg_version }}/test/postgresql.conf
             sudo pg_ctlcluster ${{ matrix.pg_version }} test start
+            sudo -u postgres createuser -s "$USER"
             echo "PGHOST=/var/run/postgresql" >> "$GITHUB_ENV"
             echo "PGPORT=5432" >> "$GITHUB_ENV"
           else
