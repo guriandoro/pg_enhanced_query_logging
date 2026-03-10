@@ -768,6 +768,21 @@ run_benchmark "PEQL OFF" "off" "OFF"
 run_benchmark "PEQL ON (1% rate limit)" "on" "RATE" \
     "ALTER SYSTEM SET peql.rate_limit = 100; ALTER SYSTEM SET peql.rate_limit_type = 'query'; ALTER SYSTEM SET peql.log_min_duration = 0;"
 
+# -- Phase 4: Traditional PG logging (no PEQL) -------------------------
+
+run_benchmark_no_peql "PG logging (no PEQL)" "PGLOG" \
+    "ALTER SYSTEM SET log_min_duration_statement = 0;
+     ALTER SYSTEM SET log_statement = 'none';
+     ALTER SYSTEM SET logging_collector = on;
+     ALTER SYSTEM SET log_duration = off"
+
+# -- Phase 5: No logging at all (no PEQL) ------------------------------
+
+run_benchmark_no_peql "No logging (no PEQL)" "NOLOG" \
+    "ALTER SYSTEM SET log_min_duration_statement = -1;
+     ALTER SYSTEM SET log_statement = 'none';
+     ALTER SYSTEM SET log_duration = off"
+
 # -- comparison summary ------------------------------------------------
 
 pct_diff() {
