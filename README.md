@@ -1,4 +1,4 @@
-# pg_enhanced_query_logging
+# pg_enhanced_query_logging - PEQL
 
 <p align="center">
   <img src="docs/images/peql-logo.png" alt="pg_enhanced_query_logging logo" width="50%">
