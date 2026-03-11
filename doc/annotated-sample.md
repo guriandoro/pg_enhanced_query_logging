@@ -36,6 +36,10 @@ peql.log_parameter_values    = on
 peql.rate_limit                      = 10
 peql.rate_limit_type                 = 'query'
 peql.rate_limit_always_log_duration  = 5000
+
+# Adaptive rate limiting (set > 0 to see adaptive metadata lines)
+peql.rate_limit_auto_max_queries     = 500
+peql.rate_limit_auto_max_bytes       = 10485760
 ```
 
 ## The Log Entry
@@ -60,6 +64,7 @@ peql.rate_limit_always_log_duration  = 5000
 # Mem_allocated: 2097152
 # Wait_events: IO:DataFileRead=12, Client:ClientRead=3
 # Log_slow_rate_type: query  Log_slow_rate_limit: 10  Log_slow_rate_limit_always_log_duration: 5000
+# Log_slow_rate_auto_max_queries: 500  Log_slow_rate_auto_max_bytes: 10485760
 SET timestamp=1741680931;
 SELECT o.id, o.total, c.name
   FROM orders o
@@ -250,6 +255,7 @@ Requires: **`peql.log_verbosity = 'full'`** and **`peql.track_wait_events = on`*
 
 ```
 # Log_slow_rate_type: query  Log_slow_rate_limit: 10  Log_slow_rate_limit_always_log_duration: 5000
+# Log_slow_rate_auto_max_queries: 500  Log_slow_rate_auto_max_bytes: 10485760
 ```
 
 When `peql.rate_limit > 1`, these fields record the sampling configuration so that pt-query-digest (or any post-processor) can extrapolate totals from sampled data:
@@ -259,6 +265,13 @@ When `peql.rate_limit > 1`, these fields record the sampling configuration so th
 - **Log_slow_rate_limit_always_log_duration** -- Queries slower than this many milliseconds bypass the rate limiter entirely. `-1` means the override is disabled.
 
 These lines only appear when `peql.rate_limit > 1`.
+
+When adaptive rate limiting is configured, an additional line records the cluster-wide throughput caps:
+
+- **Log_slow_rate_auto_max_queries** -- Maximum queries/second to log across all backends (shared memory coordination).
+- **Log_slow_rate_auto_max_bytes** -- Maximum bytes/second to log across all backends.
+
+This line only appears when `peql.rate_limit_auto_max_queries > 0` or `peql.rate_limit_auto_max_bytes > 0`.
 
 ### SET timestamp and Query Text
 
@@ -327,5 +340,6 @@ Requires: **`peql.log_query_plan = on`**.
 | Memory tracking | `peql.log_verbosity = 'full'`, `peql.track_memory = on` |
 | Wait event histogram | `peql.log_verbosity = 'full'`, `peql.track_wait_events = on` |
 | Rate limit metadata | `peql.rate_limit > 1` |
+| Adaptive rate limit metadata | `peql.rate_limit_auto_max_queries > 0` or `peql.rate_limit_auto_max_bytes > 0` |
 | Bind parameter values | `peql.log_parameter_values = on` |
 | EXPLAIN ANALYZE plan | `peql.log_query_plan = on` |
