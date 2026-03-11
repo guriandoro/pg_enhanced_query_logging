@@ -32,6 +32,16 @@ All GUC (Grand Unified Configuration) variables are prefixed with `peql.` and ca
 | `peql.rate_limit_auto_max_queries` | int | `0` | SUSET | Max queries/second to log cluster-wide (shared memory). `0` = disabled |
 | `peql.rate_limit_auto_max_bytes` | int | `0` | SUSET | Max bytes/second to log cluster-wide (shared memory). `0` = disabled |
 
+## Disk Space Protection
+
+| GUC | Type | Default | Context | Description |
+|-----|------|---------|---------|-------------|
+| `peql.disk_threshold_pct` | int (0-100) | `5` | SUSET | Pause logging when free disk space drops below this %. `0` = disabled |
+| `peql.disk_check_interval_ms` | int (ms) | `5000` | SUSET | Minimum interval between disk space checks. Lower values detect low-disk faster. Min: 100 ms |
+| `peql.disk_auto_purge` | bool | `off` | SUSET | Automatically delete old rotated (`.old`) log files when disk is low |
+
+See [Disk Space Protection](disk-space-protection.md) for full details on behavior, concurrency, and monitoring.
+
 ## Extended Tracking
 
 | GUC | Type | Default | Context | Description |

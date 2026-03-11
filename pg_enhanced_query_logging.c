@@ -24,11 +24,16 @@
 #include "postgres.h"
 
 #include "access/xact.h"
+#include <dirent.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <math.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#ifndef WIN32
+#include <sys/statvfs.h>
+#endif
 
 #include "catalog/namespace.h"
 #include "commands/explain.h"
@@ -72,7 +77,7 @@
 #if PG_VERSION_NUM >= 180000
 PG_MODULE_MAGIC_EXT(
 	.name = "pg_enhanced_query_logging",
-	.version = "1.2"
+	.version = "1.3"
 );
 #else
 PG_MODULE_MAGIC;
@@ -186,6 +191,18 @@ static bool peql_log_transaction = false;
 /* Track planning time separately from execution time. */
 static bool peql_track_planning = false;
 
+/*
+ * Disk space protection: pause logging when the log mountpoint runs low.
+ * 0 = disabled; otherwise, free space percentage below which logging pauses.
+ */
+static int peql_disk_threshold_pct = 5;
+
+/* Minimum interval (ms) between statvfs() calls to check disk space. */
+static int peql_disk_check_interval_ms = 5000;
+
+/* Automatically delete old rotated (.old) log files when disk is low. */
+static bool peql_disk_auto_purge = false;
+
 /* ---------- Rate limiting state ----------------------------------------- */
 
 /*
@@ -208,6 +225,11 @@ typedef struct PeqlSharedState
 	pg_atomic_uint64	total_queries_logged;
 	pg_atomic_uint64	total_queries_skipped;
 	pg_atomic_uint64	total_bytes_written;
+	/* Disk space protection */
+	pg_atomic_uint32	disk_paused;
+	pg_atomic_uint32	purge_in_progress;
+	pg_atomic_uint64	total_disk_skipped;
+	pg_atomic_uint64	last_disk_check_usec;
 } PeqlSharedState;
 
 static PeqlSharedState *peql_shared = NULL;
@@ -354,6 +376,10 @@ static void peql_flush_to_file(const char *data, int len);
 static bool peql_should_log(double duration_ms);
 static bool peql_adaptive_check(void);
 static void peql_adaptive_record(int bytes);
+
+/* Disk space protection. */
+static bool peql_disk_space_ok(void);
+static void peql_try_purge_old_logs(const char *dirpath, const char *fname);
 
 /* Plan-tree analysis. */
 static bool peql_plan_walker(PlanState *planstate, void *context);
@@ -676,6 +702,42 @@ _PG_init(void)
 							 0,
 							 NULL, NULL, NULL);
 
+	/* ---- GUC: peql.disk_threshold_pct ---- */
+	DefineCustomIntVariable("peql.disk_threshold_pct",
+							"Pause logging when free disk space drops below this %.",
+							"Checks the mountpoint of the log directory. "
+							"0 disables the check entirely.",
+							&peql_disk_threshold_pct,
+							5,
+							0, 100,
+							PGC_SUSET,
+							0,
+							NULL, NULL, NULL);
+
+	/* ---- GUC: peql.disk_check_interval_ms ---- */
+	DefineCustomIntVariable("peql.disk_check_interval_ms",
+							"Minimum interval (ms) between disk space checks.",
+							"Limits how often statvfs() is called. "
+							"Lower values detect low-disk faster but add syscall overhead.",
+							&peql_disk_check_interval_ms,
+							5000,
+							100, INT_MAX,
+							PGC_SUSET,
+							GUC_UNIT_MS,
+							NULL, NULL, NULL);
+
+	/* ---- GUC: peql.disk_auto_purge ---- */
+	DefineCustomBoolVariable("peql.disk_auto_purge",
+							 "Delete old rotated log files when disk is low.",
+							 "When enabled and disk space is below the threshold, "
+							 "the extension removes .old log files it created via "
+							 "pg_enhanced_query_logging_reset().",
+							 &peql_disk_auto_purge,
+							 false,
+							 PGC_SUSET,
+							 0,
+							 NULL, NULL, NULL);
+
 	/* Reserve the "peql" GUC prefix so no other extension can claim it. */
 	MarkGUCPrefixReserved("peql");
 
@@ -769,6 +831,10 @@ peql_shmem_startup(void)
 		pg_atomic_init_u64(&peql_shared->total_queries_logged, 0);
 		pg_atomic_init_u64(&peql_shared->total_queries_skipped, 0);
 		pg_atomic_init_u64(&peql_shared->total_bytes_written, 0);
+		pg_atomic_init_u32(&peql_shared->disk_paused, 0);
+		pg_atomic_init_u32(&peql_shared->purge_in_progress, 0);
+		pg_atomic_init_u64(&peql_shared->total_disk_skipped, 0);
+		pg_atomic_init_u64(&peql_shared->last_disk_check_usec, 0);
 	}
 
 	LWLockRelease(AddinShmemInitLock);
@@ -841,6 +907,166 @@ peql_adaptive_record(int bytes)
 
 	if (peql_rate_limit_auto_max_bytes > 0)
 		pg_atomic_fetch_add_u64(&peql_shared->bytes_this_window, (uint64) bytes);
+}
+
+/*
+ * ──────────────────────────────────────────────────────────────────────────
+ * Disk space protection
+ *
+ * Checks free space on the log mountpoint using statvfs() and pauses
+ * logging when it drops below peql.disk_threshold_pct.  Uses a
+ * compare-and-exchange on last_disk_check_usec so that exactly one
+ * backend performs the syscall per check interval, regardless of the
+ * number of concurrent connections.
+ *
+ * On Windows, statvfs() is unavailable; the check is a no-op (always
+ * returns true) until a GetDiskFreeSpaceEx() path is added.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+
+/*
+ * Attempt to delete old rotated log files (.old suffix) to reclaim space.
+ * Only called when peql.disk_auto_purge is on and disk is low.  Protected
+ * by the purge_in_progress atomic flag so only one backend purges at a time.
+ */
+static void
+peql_try_purge_old_logs(const char *dirpath, const char *fname)
+{
+	DIR			   *dir;
+	struct dirent  *de;
+	char			pattern[MAXPGPATH];
+	char			filepath[MAXPGPATH];
+	int				prefix_len;
+
+	if (!pg_atomic_test_set_flag(
+			(pg_atomic_flag *) &peql_shared->purge_in_progress))
+		return;
+
+	snprintf(pattern, sizeof(pattern), "%s.old", fname);
+	prefix_len = strlen(pattern);
+
+	dir = opendir(dirpath);
+	if (dir == NULL)
+	{
+		pg_atomic_clear_flag(
+			(pg_atomic_flag *) &peql_shared->purge_in_progress);
+		return;
+	}
+
+	while ((de = readdir(dir)) != NULL)
+	{
+		if (strncmp(de->d_name, pattern, prefix_len) != 0)
+			continue;
+
+		snprintf(filepath, sizeof(filepath), "%s/%s", dirpath, de->d_name);
+
+		if (unlink(filepath) == 0)
+			ereport(LOG,
+					(errmsg("peql: disk space low, purged old log file \"%s\"",
+							filepath)));
+		else
+			ereport(LOG,
+					(errcode_for_file_access(),
+					 errmsg("peql: could not remove old log file \"%s\": %m",
+							filepath)));
+	}
+
+	closedir(dir);
+
+	pg_atomic_clear_flag(
+		(pg_atomic_flag *) &peql_shared->purge_in_progress);
+}
+
+static bool
+peql_disk_space_ok(void)
+{
+#ifndef WIN32
+	uint64		old_usec;
+	uint64		now_usec;
+	uint64		interval_usec;
+	char		logpath[MAXPGPATH];
+	char		dirpath[MAXPGPATH];
+	char	   *slash;
+	struct statvfs	vfs;
+	unsigned long	free_pct;
+	bool		was_paused;
+	bool		now_ok;
+
+	if (peql_disk_threshold_pct <= 0 || peql_shared == NULL)
+		return true;
+
+	/* Fast path: if the check interval hasn't elapsed, use cached flag. */
+	old_usec = pg_atomic_read_u64(&peql_shared->last_disk_check_usec);
+	now_usec = (uint64) GetCurrentTimestamp();
+	interval_usec = (uint64) peql_disk_check_interval_ms * 1000;
+
+	if (now_usec - old_usec < interval_usec)
+		return pg_atomic_read_u32(&peql_shared->disk_paused) == 0;
+
+	/* Try to win the CAS -- only one backend checks per interval. */
+	if (!pg_atomic_compare_exchange_u64(&peql_shared->last_disk_check_usec,
+										&old_usec, now_usec))
+		return pg_atomic_read_u32(&peql_shared->disk_paused) == 0;
+
+	/* We won the CAS.  Resolve the log directory path. */
+	peql_resolve_log_path(logpath, sizeof(logpath));
+	strlcpy(dirpath, logpath, sizeof(dirpath));
+	slash = strrchr(dirpath, '/');
+	if (slash)
+		*slash = '\0';
+	else
+		strlcpy(dirpath, ".", sizeof(dirpath));
+
+	if (statvfs(dirpath, &vfs) != 0)
+	{
+		ereport(LOG,
+				(errcode_for_file_access(),
+				 errmsg("peql: could not statvfs \"%s\": %m", dirpath)));
+		return true;
+	}
+
+	if (vfs.f_blocks == 0)
+		return true;
+
+	free_pct = (unsigned long) ((double) vfs.f_bavail / (double) vfs.f_blocks * 100.0);
+	was_paused = pg_atomic_read_u32(&peql_shared->disk_paused) != 0;
+	now_ok = (free_pct >= (unsigned long) peql_disk_threshold_pct);
+
+	if (!now_ok)
+	{
+		if (!was_paused)
+			ereport(LOG,
+					(errmsg("peql: disk space low on \"%s\" (%lu%% free, threshold %d%%), "
+							"pausing query logging",
+							dirpath, free_pct, peql_disk_threshold_pct)));
+
+		pg_atomic_write_u32(&peql_shared->disk_paused, 1);
+
+		if (peql_disk_auto_purge)
+		{
+			const char *fname = (peql_log_filename && peql_log_filename[0] != '\0')
+				? peql_log_filename : "peql-slow.log";
+
+			peql_try_purge_old_logs(dirpath, fname);
+		}
+
+		return false;
+	}
+
+	if (was_paused)
+	{
+		pg_atomic_write_u32(&peql_shared->disk_paused, 0);
+		ereport(LOG,
+				(errmsg("peql: disk space recovered on \"%s\" (%lu%% free), "
+						"resuming query logging",
+						dirpath, free_pct)));
+	}
+
+	return true;
+#else
+	/* Windows: no statvfs(); always allow logging for now. */
+	return true;
+#endif
 }
 
 /*
@@ -1256,6 +1482,13 @@ peql_ExecutorFinish(QueryDesc *queryDesc)
 static bool
 peql_should_log(double duration_ms)
 {
+	/* Disk space check: skip logging entirely when the mountpoint is low. */
+	if (!peql_disk_space_ok())
+	{
+		pg_atomic_fetch_add_u64(&peql_shared->total_disk_skipped, 1);
+		return false;
+	}
+
 	/* Always-log override: very slow queries bypass the rate limiter. (-1 = disabled) */
 	if (peql_rate_limit_always_log_duration >= 0 &&
 		duration_ms >= peql_rate_limit_always_log_duration)
@@ -2481,6 +2714,7 @@ pg_enhanced_query_logging_reset(PG_FUNCTION_ARGS)
 	pg_atomic_write_u64(&peql_shared->total_queries_logged, 0);
 	pg_atomic_write_u64(&peql_shared->total_queries_skipped, 0);
 	pg_atomic_write_u64(&peql_shared->total_bytes_written, 0);
+	pg_atomic_write_u64(&peql_shared->total_disk_skipped, 0);
 
 	ereport(NOTICE,
 			(errmsg("peql: log file \"%s\" has been rotated to \"%s\"",
@@ -2493,15 +2727,16 @@ pg_enhanced_query_logging_reset(PG_FUNCTION_ARGS)
  * pg_enhanced_query_logging_stats()
  *
  * Returns global logging counters: queries_logged, queries_skipped,
- * bytes_written.  These are aggregated across all backends via shared
- * memory atomics and track activity since the last reset (or server start).
+ * bytes_written, disk_paused, disk_skipped.  These are aggregated across
+ * all backends via shared memory atomics and track activity since the
+ * last reset (or server start).
  */
 Datum
 pg_enhanced_query_logging_stats(PG_FUNCTION_ARGS)
 {
 	TupleDesc	tupdesc;
-	Datum		values[3];
-	bool		nulls[3] = {false, false, false};
+	Datum		values[5];
+	bool		nulls[5] = {false, false, false, false, false};
 
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
@@ -2514,6 +2749,8 @@ pg_enhanced_query_logging_stats(PG_FUNCTION_ARGS)
 	values[0] = Int64GetDatum((int64) pg_atomic_read_u64(&peql_shared->total_queries_logged));
 	values[1] = Int64GetDatum((int64) pg_atomic_read_u64(&peql_shared->total_queries_skipped));
 	values[2] = Int64GetDatum((int64) pg_atomic_read_u64(&peql_shared->total_bytes_written));
+	values[3] = BoolGetDatum(pg_atomic_read_u32(&peql_shared->disk_paused) != 0);
+	values[4] = Int64GetDatum((int64) pg_atomic_read_u64(&peql_shared->total_disk_skipped));
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls)));
 }

@@ -29,6 +29,7 @@ The extension hooks into the executor pipeline to capture timing, buffer I/O, WA
 - **[Nested statement logging](doc/configuration.md#statement-filtering)** -- optional logging of statements inside PL/pgSQL functions
 - **[Parameter value logging](doc/configuration.md#query-plan-and-parameters)** -- optional inclusion of bind parameter values from prepared statements and parameterized queries in log entries
 - **[EXPLAIN plan inclusion](doc/configuration.md#query-plan-and-parameters)** -- optional EXPLAIN ANALYZE output embedded in the log entry
+- **[Disk space protection](doc/disk-space-protection.md)** -- automatic pause of logging when the log mountpoint runs low on disk, with optional old log purging
 
 ## Requirements
 
@@ -75,7 +76,7 @@ make maintainer-clean USE_PGXS=1
 
 This installs:
 - `pg_enhanced_query_logging.so` (or `.dylib`) into `$(pg_config --pkglibdir)`
-- `pg_enhanced_query_logging.control` and the SQL files (`pg_enhanced_query_logging--1.0.sql`, `pg_enhanced_query_logging--1.1.sql`, `pg_enhanced_query_logging--1.2.sql`, and upgrade scripts) into `$(pg_config --sharedir)/extension/`
+- `pg_enhanced_query_logging.control` and the SQL files (`pg_enhanced_query_logging--1.0.sql`, `pg_enhanced_query_logging--1.1.sql`, `pg_enhanced_query_logging--1.2.sql`, `pg_enhanced_query_logging--1.3.sql`, and upgrade scripts) into `$(pg_config --sharedir)/extension/`
 
 ### Loading the Extension
 
@@ -167,6 +168,7 @@ Detailed documentation is available in the [`doc/`](doc/) directory:
 - [SQL Functions](doc/sql-functions.md) -- `pg_enhanced_query_logging_reset()` and `pg_enhanced_query_logging_stats()`
 - [Testing](doc/testing.md) -- prerequisites, regression tests, TAP tests, Meson build, CI/CD, and manual testing
 - [Compatibility Notes](doc/compatibility.md) -- differences from MySQL behavior and known limitations
+- [Disk Space Protection](doc/disk-space-protection.md) -- automatic pause, auto-purge, and monitoring under low disk conditions
 - [Contributing](doc/contributing.md) -- how to contribute and code style guidelines
 
 ## License

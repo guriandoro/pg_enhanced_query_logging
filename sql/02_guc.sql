@@ -71,6 +71,38 @@ SHOW peql.log_query_plan_format;
 SET peql.rate_limit = 0;
 \set ON_ERROR_STOP 1
 
+-- Disk space protection GUCs
+SHOW peql.disk_threshold_pct;
+SHOW peql.disk_check_interval_ms;
+SHOW peql.disk_auto_purge;
+
+-- Test setting disk_threshold_pct
+SET peql.disk_threshold_pct = 10;
+SHOW peql.disk_threshold_pct;
+SET peql.disk_threshold_pct = 0;
+SHOW peql.disk_threshold_pct;
+
+-- Out-of-range values should fail
+\set ON_ERROR_STOP 0
+SET peql.disk_threshold_pct = -1;
+SET peql.disk_threshold_pct = 101;
+\set ON_ERROR_STOP 1
+
+-- Test setting disk_check_interval_ms
+SET peql.disk_check_interval_ms = 1000;
+SHOW peql.disk_check_interval_ms;
+
+-- Below minimum (100ms) should fail
+\set ON_ERROR_STOP 0
+SET peql.disk_check_interval_ms = 50;
+\set ON_ERROR_STOP 1
+
+-- Test setting disk_auto_purge
+SET peql.disk_auto_purge = on;
+SHOW peql.disk_auto_purge;
+SET peql.disk_auto_purge = off;
+SHOW peql.disk_auto_purge;
+
 -- Reset all to defaults
 RESET peql.enabled;
 RESET peql.log_min_duration;
@@ -78,3 +110,6 @@ RESET peql.log_verbosity;
 RESET peql.rate_limit;
 RESET peql.rate_limit_type;
 RESET peql.log_query_plan_format;
+RESET peql.disk_threshold_pct;
+RESET peql.disk_check_interval_ms;
+RESET peql.disk_auto_purge;

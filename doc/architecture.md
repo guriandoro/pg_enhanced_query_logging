@@ -57,11 +57,19 @@ Rate limiting uses PostgreSQL's built-in PRNG (`pg_prng_uint64()` from `pg_globa
 
 ## File I/O
 
-- Uses PostgreSQL's `AllocateFile()`/`FreeFile()` for managed file handles
-- Each backend opens, appends, and closes the file per log entry
+- Uses raw POSIX `open(O_WRONLY | O_APPEND | O_CREAT)` / `write()` / `close()` for each log entry
+- Each backend opens, appends, and closes the file per log entry -- no persistent file handle
 - `O_APPEND` guarantees atomic writes on POSIX for entries under `PIPE_BUF` (typically 4-64 KB)
-- If the log directory doesn't exist, the extension creates it automatically
+- If the log directory doesn't exist, the extension creates it automatically via `MakePGDirectory()`
 - Log path resolution: `peql.log_directory` overrides PostgreSQL's `log_directory`; relative paths resolve against `DataDir`
+
+## Disk Space Protection
+
+Before formatting or writing a log entry, `peql_should_log()` calls `peql_disk_space_ok()` to check free space on the log mountpoint via POSIX `statvfs()`. The check uses a compare-and-exchange (CAS) on a shared-memory timestamp so that exactly one backend performs the syscall per `peql.disk_check_interval_ms`, regardless of connection count. All other backends read the cached `disk_paused` flag (a single atomic read, ~1 ns).
+
+When free space drops below `peql.disk_threshold_pct`, the flag is set and all backends skip logging. When space recovers, the flag is cleared. Optional auto-purge (`peql.disk_auto_purge`) deletes old rotated log files to reclaim space.
+
+See [Disk Space Protection](disk-space-protection.md) for the full design, concurrency analysis, and configuration reference.
 
 ## Plan Tree Analysis
 

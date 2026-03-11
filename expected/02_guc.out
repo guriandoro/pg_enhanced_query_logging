@@ -210,6 +210,75 @@ SHOW peql.log_query_plan_format;
 SET peql.rate_limit = 0;
 ERROR:  0 is outside the valid range for parameter "peql.rate_limit" (1 .. 2147483647)
 \set ON_ERROR_STOP 1
+-- Disk space protection GUCs
+SHOW peql.disk_threshold_pct;
+ peql.disk_threshold_pct 
+-------------------------
+ 5
+(1 row)
+
+SHOW peql.disk_check_interval_ms;
+ peql.disk_check_interval_ms 
+-----------------------------
+ 5s
+(1 row)
+
+SHOW peql.disk_auto_purge;
+ peql.disk_auto_purge 
+----------------------
+ off
+(1 row)
+
+-- Test setting disk_threshold_pct
+SET peql.disk_threshold_pct = 10;
+SHOW peql.disk_threshold_pct;
+ peql.disk_threshold_pct 
+-------------------------
+ 10
+(1 row)
+
+SET peql.disk_threshold_pct = 0;
+SHOW peql.disk_threshold_pct;
+ peql.disk_threshold_pct 
+-------------------------
+ 0
+(1 row)
+
+-- Out-of-range values should fail
+\set ON_ERROR_STOP 0
+SET peql.disk_threshold_pct = -1;
+ERROR:  -1 is outside the valid range for parameter "peql.disk_threshold_pct" (0 .. 100)
+SET peql.disk_threshold_pct = 101;
+ERROR:  101 is outside the valid range for parameter "peql.disk_threshold_pct" (0 .. 100)
+\set ON_ERROR_STOP 1
+-- Test setting disk_check_interval_ms
+SET peql.disk_check_interval_ms = 1000;
+SHOW peql.disk_check_interval_ms;
+ peql.disk_check_interval_ms 
+-----------------------------
+ 1s
+(1 row)
+
+-- Below minimum (100ms) should fail
+\set ON_ERROR_STOP 0
+SET peql.disk_check_interval_ms = 50;
+ERROR:  50 ms is outside the valid range for parameter "peql.disk_check_interval_ms" (100 ms .. 2147483647 ms)
+\set ON_ERROR_STOP 1
+-- Test setting disk_auto_purge
+SET peql.disk_auto_purge = on;
+SHOW peql.disk_auto_purge;
+ peql.disk_auto_purge 
+----------------------
+ on
+(1 row)
+
+SET peql.disk_auto_purge = off;
+SHOW peql.disk_auto_purge;
+ peql.disk_auto_purge 
+----------------------
+ off
+(1 row)
+
 -- Reset all to defaults
 RESET peql.enabled;
 RESET peql.log_min_duration;
@@ -217,3 +286,6 @@ RESET peql.log_verbosity;
 RESET peql.rate_limit;
 RESET peql.rate_limit_type;
 RESET peql.log_query_plan_format;
+RESET peql.disk_threshold_pct;
+RESET peql.disk_check_interval_ms;
+RESET peql.disk_auto_purge;

@@ -6,7 +6,7 @@ SELECT extname, extversion FROM pg_extension
  WHERE extname = 'pg_enhanced_query_logging';
           extname          | extversion 
 ---------------------------+------------
- pg_enhanced_query_logging | 1.2
+ pg_enhanced_query_logging | 1.3
 (1 row)
 
 -- The reset function exists and is callable by superuser.
@@ -19,14 +19,16 @@ SELECT pg_enhanced_query_logging_reset();
 (1 row)
 
 RESET client_min_messages;
--- The stats function returns a valid row with three bigint columns.
+-- The stats function returns a valid row with all expected columns.
 SELECT queries_logged >= 0 AS logged_ok,
        queries_skipped >= 0 AS skipped_ok,
-       bytes_written >= 0 AS bytes_ok
+       bytes_written >= 0 AS bytes_ok,
+       disk_paused IS NOT NULL AS paused_ok,
+       disk_skipped >= 0 AS disk_skipped_ok
   FROM pg_enhanced_query_logging_stats();
- logged_ok | skipped_ok | bytes_ok 
------------+------------+----------
- t         | t          | t
+ logged_ok | skipped_ok | bytes_ok | paused_ok | disk_skipped_ok 
+-----------+------------+----------+-----------+-----------------
+ t         | t          | t        | t         | t
 (1 row)
 
 -- Extension can be dropped cleanly

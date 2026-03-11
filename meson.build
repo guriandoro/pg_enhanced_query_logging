@@ -23,8 +23,10 @@ install_data(
   'pg_enhanced_query_logging--1.0.sql',
   'pg_enhanced_query_logging--1.1.sql',
   'pg_enhanced_query_logging--1.2.sql',
+  'pg_enhanced_query_logging--1.3.sql',
   'pg_enhanced_query_logging--1.0--1.1.sql',
   'pg_enhanced_query_logging--1.1--1.2.sql',
+  'pg_enhanced_query_logging--1.2--1.3.sql',
   kwargs: contrib_data_args,
 )
 
