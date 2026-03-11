@@ -163,6 +163,7 @@ Detailed documentation is available in the [`doc/`](doc/) directory:
 
 - [Configuration Reference](doc/configuration.md) -- all `peql.*` GUC variables, context values, and runtime examples
 - [Output Format](doc/output-format.md) -- log entry examples at each verbosity level and a complete field reference
+- [Annotated Sample Entry](doc/annotated-sample.md) -- a full log entry with every feature enabled, explained section by section
 - [Using with pt-query-digest](doc/pt-query-digest.md) -- filtering, time window analysis, comparing periods, and sampled data
 - [Architecture](doc/architecture.md) -- hook chain, rate limiting internals, file I/O, and plan tree analysis
 - [SQL Functions](doc/sql-functions.md) -- `pg_enhanced_query_logging_reset()` and `pg_enhanced_query_logging_stats()`
