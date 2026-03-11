@@ -10,10 +10,12 @@ A PostgreSQL extension that produces **pt-query-digest-compatible slow query log
 
 The extension hooks into the executor pipeline to capture timing, buffer I/O, WAL (Write-Ahead Log), JIT (Just-In-Time compilation), and row-count metrics for every query that exceeds a configurable duration threshold, then writes them to a dedicated log file that [`pt-query-digest`](https://docs.percona.com/percona-toolkit/pt-query-digest.html) can parse directly.
 
-> **Warning**
+> **⚠️ Warning**
 > This extension is under active development and has **not** been validated for production use.
 > Use it in development and testing environments only. APIs, configuration parameters, and
 > log format may change in future releases without notice.
+
+**Want to see what the extension can do at a glance?** Check the [Annotated Sample Entry](doc/annotated-sample.md) -- a fully commented log entry showing every metric and feature in action.
 
 ## Features
 
